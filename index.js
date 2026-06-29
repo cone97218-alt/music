@@ -11,14 +11,17 @@ var state = {
   isPlaying: false,
   loopMode: 'list', // 'list', 'single', 'shuffle'
   volume: 0.5,
+  activeQueue: [],
   settings: {
-    displayMode: 'wand-modal' // 'wand-modal', 'wand-fullscreen', 'qr-bar', 'qr-top', 'qr-bottom', 'qr-left', 'qr-right'
+    displayMode: 'wand-modal',
+    audioQuality: '999'
   }
 };
 
 var audio = null;
 var qrBtnObserver = null;
 var currentSearchSongs = [];
+var lastSearchQueryState = null;
 var currentSearchPage = 1;
 var currentSearchQuery = '';
 var activeTab = 'search'; // 'search', 'playlists'
@@ -82,6 +85,11 @@ function saveState() {
     localStorage.setItem('fire_loop_mode', state.loopMode);
     localStorage.setItem('fire_volume', String(state.volume));
     localStorage.setItem('fire_settings', JSON.stringify(state.settings));
+    if (state.activeQueue) {
+      localStorage.setItem('fire_active_queue', JSON.stringify(state.activeQueue));
+    } else {
+      localStorage.removeItem('fire_active_queue');
+    }
   } catch (e) {
     console.error("[FIRE] Failed to save state to localStorage:", e);
   }
@@ -95,7 +103,7 @@ function loadState() {
     }
     
     var savedCurrentPlaylist = localStorage.getItem('fire_current_playlist');
-    if (savedCurrentPlaylist && state.playlists[savedCurrentPlaylist]) {
+    if (savedCurrentPlaylist && (savedCurrentPlaylist === "__active_queue__" || state.playlists[savedCurrentPlaylist])) {
       state.currentPlaylist = savedCurrentPlaylist;
     }
 
@@ -112,6 +120,13 @@ function loadState() {
     var savedSettings = localStorage.getItem('fire_settings');
     if (savedSettings) {
       state.settings = Object.assign({}, state.settings, JSON.parse(savedSettings));
+    }
+
+    var savedQueue = localStorage.getItem('fire_active_queue');
+    if (savedQueue) {
+      state.activeQueue = JSON.parse(savedQueue);
+    } else {
+      state.activeQueue = state.playlists[state.currentPlaylist] || [];
     }
 
     state.viewMode = localStorage.getItem('fire_view_mode') || 'cd';
@@ -216,7 +231,7 @@ async function playSong(song) {
 
   try {
     // 1. Get Streaming URL
-    var urlRes = await fetch(`https://music-api.gdstudio.xyz/api.php?types=url&id=${song.id}`);
+    var urlRes = await fetch(`https://music-api.gdstudio.xyz/api.php?types=url&source=${song.source || 'netease'}&id=${song.id}&br=${state.settings.audioQuality || 999}`);
     var urlData = await urlRes.json();
     if (!urlData || !urlData.url) {
       throw new Error("Empty URL returned from API");
@@ -239,15 +254,48 @@ async function playSong(song) {
   }
 
   // 2. Load Lyrics asynchronously
-  fetchAndParseLyrics(song.id);
+  fetchAndParseLyrics(song.id, song.source);
 }
 
-async function fetchAndParseLyrics(songId) {
+async function fetchAndParseLyrics(songId, source) {
   try {
-    var res = await fetch(`https://music-api.gdstudio.xyz/api.php?types=lyric&id=${songId}`);
+    var res = await fetch(`https://music-api.gdstudio.xyz/api.php?types=lyric&source=${source || 'netease'}&id=${songId}`);
     var data = await res.json();
     if (data && data.lyric) {
-      parseLRC(data.lyric);
+      var original = parseLRC(data.lyric);
+      
+      // Parse translation if exists
+      var tlyricText = '';
+      if (data.tlyric) {
+        if (typeof data.tlyric === 'string') {
+          tlyricText = data.tlyric;
+        } else if (typeof data.tlyric === 'object' && data.tlyric.lyric) {
+          tlyricText = data.tlyric.lyric;
+        }
+      }
+      
+      if (tlyricText) {
+        var translated = parseLRC(tlyricText);
+        // Merge translated lyrics into original lyrics by closest timestamp matching
+        original.forEach(line => {
+          var match = null;
+          var minDiff = 0.5; // 500ms tolerance
+          translated.forEach(tLine => {
+            var diff = Math.abs(line.time - tLine.time);
+            if (diff < minDiff) {
+              minDiff = diff;
+              match = tLine;
+            }
+          });
+          if (match && match.text.trim()) {
+            line.translation = match.text.trim();
+          } else {
+            line.translation = '';
+          }
+        });
+      }
+      
+      lyricsList = original;
       renderLyrics();
     } else {
       lyricsList = [];
@@ -261,8 +309,8 @@ async function fetchAndParseLyrics(songId) {
 }
 
 function parseLRC(lrcText) {
-  lyricsList = [];
-  if (!lrcText) return;
+  var list = [];
+  if (!lrcText) return list;
   var lines = lrcText.split('\n');
   var timeReg = /\[(\d+):(\d+)(?:\.(\d+))?\]/g;
 
@@ -287,13 +335,14 @@ function parseLRC(lrcText) {
         var ms = timeParts[3] ? parseInt(timeParts[3], 10) : 0;
         if (timeParts[3] && timeParts[3].length === 2) ms *= 10;
         var totalSeconds = minutes * 60 + seconds + ms / 1000;
-        lyricsList.push({ time: totalSeconds, text: text || '...' });
+        list.push({ time: totalSeconds, text: text || '...' });
       }
     }
   }
 
   // Sort by timeline
-  lyricsList.sort((a, b) => a.time - b.time);
+  list.sort((a, b) => a.time - b.time);
+  return list;
 }
 
 function handleSongEnded() {
@@ -308,7 +357,7 @@ function handleSongEnded() {
 }
 
 function playNext() {
-  var list = state.playlists[state.currentPlaylist] || [];
+  var list = state.activeQueue || state.playlists[state.currentPlaylist] || [];
   if (list.length === 0) return;
 
   var nextIdx = 0;
@@ -327,7 +376,7 @@ function playNext() {
 }
 
 function playPrev() {
-  var list = state.playlists[state.currentPlaylist] || [];
+  var list = state.activeQueue || state.playlists[state.currentPlaylist] || [];
   if (list.length === 0) return;
 
   var prevIdx = list.length - 1;
@@ -347,7 +396,7 @@ function playPrev() {
 
 function findCurrentSongIndex() {
   if (!state.currentSong) return -1;
-  var list = state.playlists[state.currentPlaylist] || [];
+  var list = state.activeQueue || state.playlists[state.currentPlaylist] || [];
   for (var i = 0; i < list.length; i++) {
     if (list[i].id === state.currentSong.id) {
       return i;
@@ -357,22 +406,66 @@ function findCurrentSongIndex() {
 }
 
 // ─── Search API Query ────────────────────────────────────────────────────────
+async function fetchWithRetry(url, options = {}, retries = 3, delay = 500) {
+  for (var i = 0; i < retries; i++) {
+    try {
+      var res = await fetch(url, options);
+      if (!res.ok) {
+        throw new Error(`HTTP status: ${res.status}`);
+      }
+      var data = await res.json();
+      return data;
+    } catch (err) {
+      if (i === retries - 1) {
+        throw err;
+      }
+      console.warn(`[FIRE] Fetch failed (attempt ${i + 1}/${retries}). Retrying in ${delay}ms...`, err);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
 async function performSearch(query, page) {
   if (!query) return;
   currentSearchQuery = query;
   currentSearchPage = page;
+  lastSearchQueryState = null;
 
   var doc = getDoc();
   var container = doc.getElementById('fire-search-results');
   if (container) {
-    container.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.6;"><i class="fa-solid fa-spinner fa-spin"></i> 搜索中...</div>';
+    container.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.6;"><i class="fa-solid fa-spinner fa-spin"></i> 正在全网搜索中...</div>';
   }
 
   try {
-    var res = await fetch(`https://music-api.gdstudio.xyz/api.php?types=search&name=${encodeURIComponent(query)}&count=20&pages=${page}`);
-    var data = await res.json();
-    
-    currentSearchSongs = Array.isArray(data) ? data : [];
+    var sources = ['netease', 'tencent', 'kuwo', 'bilibili'];
+    var promises = sources.map(source => 
+      fetchWithRetry(`https://music-api.gdstudio.xyz/api.php?types=search&source=${source}&name=${encodeURIComponent(query)}&count=10&pages=${page}`, {}, 3, 500)
+        .then(data => {
+          if (!Array.isArray(data)) return [];
+          return data.map(song => {
+            song.source = source;
+            return song;
+          });
+        })
+        .catch(err => {
+          console.warn(`[FIRE] Search source ${source} failed after retries:`, err);
+          return [];
+        })
+    );
+
+    var results = await Promise.all(promises);
+    var merged = [];
+    var maxLength = Math.max(...results.map(r => r.length));
+    for (var i = 0; i < maxLength; i++) {
+      for (var j = 0; j < results.length; j++) {
+        if (results[j][i]) {
+          merged.push(results[j][i]);
+        }
+      }
+    }
+
+    currentSearchSongs = merged;
     renderSearchResults();
   } catch (err) {
     console.error("[FIRE] Search failed:", err);
@@ -450,6 +543,20 @@ function createUI() {
       <label class="fire-settings-item">
         <input type="radio" name="fire-display-mode" value="qr-right">
         <span>QR 栏 (右侧滑出)</span>
+      </label>
+      
+      <div class="fire-settings-title" style="margin-top: 12px; border-top: 1px solid var(--fire-border); padding-top: 8px;">播放音质</div>
+      <label class="fire-settings-item">
+        <input type="radio" name="fire-audio-quality" value="128">
+        <span>流畅 (128kbps)</span>
+      </label>
+      <label class="fire-settings-item">
+        <input type="radio" name="fire-audio-quality" value="320">
+        <span>极高 (320kbps)</span>
+      </label>
+      <label class="fire-settings-item">
+        <input type="radio" name="fire-audio-quality" value="999">
+        <span>无损 (Master/Lossless)</span>
       </label>
     </div>
 
@@ -601,6 +708,17 @@ function createUI() {
       radio.checked = true;
     }
   });
+
+  // Set default audio quality selection
+  if (!state.settings.audioQuality) {
+    state.settings.audioQuality = '999';
+  }
+  var qualityRadios = doc.querySelectorAll('input[name="fire-audio-quality"]');
+  qualityRadios.forEach(radio => {
+    if (radio.value === state.settings.audioQuality) {
+      radio.checked = true;
+    }
+  });
 }
 
 function bindUIEvents() {
@@ -637,6 +755,15 @@ function bindUIEvents() {
       saveState();
       applyDisplayMode();
       showToast("显示模式已更改");
+    });
+  });
+
+  // Audio Quality Radios
+  var qualityRadios = doc.querySelectorAll('input[name="fire-audio-quality"]');
+  qualityRadios.forEach(radio => {
+    radio.addEventListener('change', function () {
+      state.settings.audioQuality = this.value;
+      saveState();
     });
   });
 
@@ -815,6 +942,7 @@ function bindUIEvents() {
   if (btnRename) {
     btnRename.addEventListener('click', function () {
       var oldName = state.currentPlaylist;
+      if (oldName === "__active_queue__") return;
       showPrompt(`将歌单 "${oldName}" 重命名为：`, oldName, "重命名歌单").then(newName => {
         if (!newName) return;
         newName = newName.trim();
@@ -838,6 +966,7 @@ function bindUIEvents() {
   if (btnDelete) {
     btnDelete.addEventListener('click', function () {
       var name = state.currentPlaylist;
+      if (name === "__active_queue__") return;
       if (Object.keys(state.playlists).length <= 1) {
         return;
       }
@@ -903,6 +1032,7 @@ function switchTab(tabName) {
   activeTab = tabName;
   updateTabUI();
   if (tabName === 'playlists') {
+    renderPlaylistOptions();
     renderPlaylistSongs();
   }
 }
@@ -981,7 +1111,7 @@ async function fetchAndSetCover(song) {
   };
 
   try {
-    var res = await fetch(`https://music-api.gdstudio.xyz/api.php?types=pic&id=${id}`);
+    var res = await fetch(`https://music-api.gdstudio.xyz/api.php?types=pic&source=${song.source || 'netease'}&id=${id}&size=500`);
     var data = await res.json();
     if (data && data.url) {
       var coverUrl = data.url;
@@ -1162,7 +1292,21 @@ function renderLyrics() {
     var div = doc.createElement('div');
     div.className = 'fire-lyric-line';
     div.id = 'fire-lyric-line-' + i;
-    div.textContent = lyricsList[i].text;
+
+    // Create container for original text
+    var origDiv = doc.createElement('div');
+    origDiv.className = 'fire-lyric-original';
+    origDiv.textContent = lyricsList[i].text;
+    div.appendChild(origDiv);
+
+    // Create container for translation if exists
+    if (lyricsList[i].translation) {
+      var transDiv = doc.createElement('div');
+      transDiv.className = 'fire-lyric-translation';
+      transDiv.textContent = lyricsList[i].translation;
+      div.appendChild(transDiv);
+    }
+
     scroller.appendChild(div);
   }
 }
@@ -1198,12 +1342,21 @@ function renderSearchResults() {
     
     var artistName = Array.isArray(song.artist) ? song.artist.join(' / ') : song.artist;
     
+    var sourceBadges = {
+      'netease': '<span class="fire-source-badge netease">网易</span>',
+      'tencent': '<span class="fire-source-badge tencent">QQ</span>',
+      'kuwo': '<span class="fire-source-badge kuwo">酷我</span>',
+      'bilibili': '<span class="fire-source-badge bilibili">B站</span>'
+    };
+    var badge = sourceBadges[song.source] || '<span class="fire-source-badge">其它</span>';
+
     item.innerHTML = `
       <div class="fire-music-item-info">
-        <div class="fire-music-item-title">${song.name}</div>
+        <div class="fire-music-item-title">${badge} ${song.name}</div>
         <div class="fire-music-item-meta">${artistName} - ${song.album || '未知专辑'}</div>
       </div>
       <div class="fire-music-item-actions">
+        ${song.album ? `<button class="fire-music-item-btn album-btn" title="查看专辑"><i class="fa-solid fa-compact-disc"></i></button>` : ''}
         <button class="fire-music-item-btn play-btn" title="立刻播放">
           <i class="fa-solid fa-play"></i>
         </button>
@@ -1215,13 +1368,16 @@ function renderSearchResults() {
 
     // Click on item body plays it
     item.addEventListener('click', function(e) {
-      // avoid double triggers if they click action buttons
       if (e.target.closest('.fire-music-item-btn')) return;
+      state.activeQueue = [song];
+      saveState();
       playSong(song);
     });
 
     item.querySelector('.play-btn').addEventListener('click', function (e) {
       e.stopPropagation();
+      state.activeQueue = [song];
+      saveState();
       playSong(song);
     });
 
@@ -1229,6 +1385,13 @@ function renderSearchResults() {
       e.stopPropagation();
       showAddToPlaylistMenu(e, song);
     });
+
+    if (song.album) {
+      item.querySelector('.album-btn').addEventListener('click', function (e) {
+        e.stopPropagation();
+        viewAlbum(song.album, song.source);
+      });
+    }
 
     container.appendChild(item);
   });
@@ -1239,6 +1402,13 @@ function renderPlaylistOptions() {
   var select = doc.getElementById('fire-playlist-select');
   if (!select) return;
   select.innerHTML = '';
+
+  // Add Virtual Option for Active Queue
+  var optQueue = doc.createElement('option');
+  optQueue.value = "__active_queue__";
+  optQueue.textContent = "🎵 当前播放队列";
+  optQueue.selected = state.currentPlaylist === "__active_queue__";
+  select.appendChild(optQueue);
 
   Object.keys(state.playlists).forEach(name => {
     var opt = doc.createElement('option');
@@ -1254,9 +1424,21 @@ function renderPlaylistSongs() {
   var container = doc.getElementById('fire-playlist-songs');
   if (!container) return;
 
-  var list = state.playlists[state.currentPlaylist] || [];
+  var isVirtual = state.currentPlaylist === "__active_queue__";
+  
+  // Decouple Rename and Delete buttons when viewing virtual queue
+  var btnRename = doc.getElementById('fire-btn-playlist-rename');
+  var btnDelete = doc.getElementById('fire-btn-playlist-delete');
+  if (btnRename) btnRename.style.display = isVirtual ? 'none' : '';
+  if (btnDelete) btnDelete.style.display = isVirtual ? 'none' : '';
+
+  var list = isVirtual ? (state.activeQueue || []) : (state.playlists[state.currentPlaylist] || []);
+  if (!Array.isArray(list)) {
+    list = [];
+  }
+
   if (list.length === 0) {
-    container.innerHTML = '<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">歌单中暂无歌曲，去搜索并添加吧！</div>';
+    container.innerHTML = `<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">${isVirtual ? '当前播放队列为空' : '歌单中暂无歌曲，去搜索并添加吧！'}</div>`;
     return;
   }
 
@@ -1268,14 +1450,23 @@ function renderPlaylistSongs() {
 
     var artistName = Array.isArray(song.artist) ? song.artist.join(' / ') : song.artist;
 
+    var sourceBadges = {
+      'netease': '<span class="fire-source-badge netease">网易</span>',
+      'tencent': '<span class="fire-source-badge tencent">QQ</span>',
+      'kuwo': '<span class="fire-source-badge kuwo">酷我</span>',
+      'bilibili': '<span class="fire-source-badge bilibili">B站</span>'
+    };
+    var badge = sourceBadges[song.source] || '<span class="fire-source-badge">其它</span>';
+
     item.innerHTML = `
       <div style="font-size:11px;opacity:0.5;width:16px;text-align:right;">${idx + 1}</div>
       <div class="fire-music-item-info">
-        <div class="fire-music-item-title">${song.name}</div>
+        <div class="fire-music-item-title">${badge} ${song.name}</div>
         <div class="fire-music-item-meta">${artistName} - ${song.album || '未知专辑'}</div>
       </div>
       <div class="fire-music-item-actions">
-        <button class="fire-music-item-btn remove remove-btn" title="从歌单移除">
+        ${song.album ? `<button class="fire-music-item-btn album-btn" title="查看专辑"><i class="fa-solid fa-compact-disc"></i></button>` : ''}
+        <button class="fire-music-item-btn remove remove-btn" title="${isVirtual ? '从队列移出' : '从歌单移除'}">
           <i class="fa-solid fa-trash"></i>
         </button>
       </div>
@@ -1283,16 +1474,207 @@ function renderPlaylistSongs() {
 
     item.addEventListener('click', function (e) {
       if (e.target.closest('.fire-music-item-btn')) return;
+      if (!isVirtual) {
+        state.activeQueue = list;
+      }
+      saveState();
       playSong(song);
     });
 
     item.querySelector('.remove-btn').addEventListener('click', function (e) {
       e.stopPropagation();
-      removeSongFromPlaylist(idx);
+      if (isVirtual) {
+        state.activeQueue.splice(idx, 1);
+        saveState();
+        renderPlaylistSongs();
+      } else {
+        removeSongFromPlaylist(idx);
+      }
     });
+
+    if (song.album) {
+      item.querySelector('.album-btn').addEventListener('click', function (e) {
+        e.stopPropagation();
+        viewAlbum(song.album, song.source);
+      });
+    }
 
     container.appendChild(item);
   });
+}
+
+function showAddAlbumToPlaylistMenu(event, albumSongs) {
+  var doc = getDoc();
+  var menu = doc.getElementById('fire-add-menu');
+  if (!menu) return;
+
+  menu.innerHTML = '';
+  Object.keys(state.playlists).forEach(name => {
+    var item = doc.createElement('div');
+    item.className = 'fire-add-menu-item';
+    item.textContent = name;
+    item.addEventListener('click', function (e) {
+      e.stopPropagation();
+      menu.style.display = 'none';
+      
+      albumSongs.forEach(s => {
+        var list = state.playlists[name];
+        var exists = list.some(exist => exist.id === s.id);
+        if (!exists) {
+          list.push(s);
+        }
+      });
+      saveState();
+      if (state.currentPlaylist === name) {
+        renderPlaylistSongs();
+      }
+    });
+    menu.appendChild(item);
+  });
+
+  // Calculate position
+  var rect = event.currentTarget.getBoundingClientRect();
+  var docEl = doc.documentElement;
+  var scrollLeft = window.pageXOffset || docEl.scrollLeft;
+  var scrollTop = window.pageYOffset || docEl.scrollTop;
+
+  menu.style.top = (rect.bottom + scrollTop) + 'px';
+  menu.style.left = (rect.left + scrollLeft - 50) + 'px';
+  menu.style.display = 'block';
+
+  event.stopPropagation();
+}
+
+async function viewAlbum(albumName, source) {
+  var doc = getDoc();
+  var container = doc.getElementById('fire-search-results');
+  var pagination = doc.getElementById('fire-search-pagination');
+  if (!container) return;
+
+  if (!lastSearchQueryState) {
+    lastSearchQueryState = {
+      query: currentSearchQuery,
+      page: currentSearchPage,
+      songs: currentSearchSongs
+    };
+  }
+
+  switchTab('search');
+
+  container.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.6;"><i class="fa-solid fa-spinner fa-spin"></i> 正在加载专辑...</div>';
+  if (pagination) pagination.style.display = 'none';
+
+  try {
+    var data = await fetchWithRetry(`https://music-api.gdstudio.xyz/api.php?types=search&source=${source}_album&name=${encodeURIComponent(albumName)}&count=50`, {}, 3, 500);
+    var albumSongs = Array.isArray(data) ? data : [];
+
+    albumSongs.forEach(s => {
+      s.source = source;
+    });
+
+    container.innerHTML = '';
+
+    // Create Album Header
+    var header = doc.createElement('div');
+    header.className = 'fire-album-header';
+    header.innerHTML = `
+      <div class="fire-album-header-title">专辑: ${albumName}</div>
+      <div class="fire-album-header-actions">
+        <button id="fire-btn-album-playall" class="fire-btn" style="padding: 4px 8px; font-size:11px;">播放全部</button>
+        <button id="fire-btn-album-addall" class="fire-btn fire-btn-normal" style="padding: 4px 8px; font-size:11px; margin-left: 5px;">导入歌单</button>
+        <button id="fire-btn-album-back" class="fire-btn fire-btn-normal" style="padding: 4px 8px; font-size:11px; margin-left: 5px;">返回</button>
+      </div>
+    `;
+    container.appendChild(header);
+
+    if (albumSongs.length === 0) {
+      var noSongs = doc.createElement('div');
+      noSongs.style.cssText = 'text-align:center;padding:20px;opacity:0.5;font-size:12px;';
+      noSongs.textContent = '未在该专辑中找到曲目';
+      container.appendChild(noSongs);
+    } else {
+      albumSongs.forEach(song => {
+        var item = doc.createElement('div');
+        var isPlayingThis = state.currentSong && state.currentSong.id === song.id;
+        item.className = 'fire-music-item' + (isPlayingThis ? ' playing' : '');
+        var artistName = Array.isArray(song.artist) ? song.artist.join(' / ') : song.artist;
+        
+        item.innerHTML = `
+          <div class="fire-music-item-info">
+            <div class="fire-music-item-title">${song.name}</div>
+            <div class="fire-music-item-meta">${artistName}</div>
+          </div>
+          <div class="fire-music-item-actions">
+            <button class="fire-music-item-btn play-btn" title="立刻播放">
+              <i class="fa-solid fa-play"></i>
+            </button>
+            <button class="fire-music-item-btn add-btn" title="添加到歌单">
+              <i class="fa-solid fa-plus"></i>
+            </button>
+          </div>
+        `;
+
+        item.addEventListener('click', function(e) {
+          if (e.target.closest('.fire-music-item-btn')) return;
+          state.activeQueue = albumSongs;
+          saveState();
+          playSong(song);
+        });
+
+        item.querySelector('.play-btn').addEventListener('click', function (e) {
+          e.stopPropagation();
+          state.activeQueue = albumSongs;
+          saveState();
+          playSong(song);
+        });
+
+        item.querySelector('.add-btn').addEventListener('click', function (e) {
+          e.stopPropagation();
+          showAddToPlaylistMenu(e, song);
+        });
+
+        container.appendChild(item);
+      });
+    }
+
+    var btnPlayAll = doc.getElementById('fire-btn-album-playall');
+    if (btnPlayAll) {
+      btnPlayAll.addEventListener('click', function () {
+        if (albumSongs.length === 0) return;
+        state.activeQueue = albumSongs;
+        saveState();
+        playSong(albumSongs[0]);
+      });
+    }
+
+    var btnAddAll = doc.getElementById('fire-btn-album-addall');
+    if (btnAddAll) {
+      btnAddAll.addEventListener('click', function (e) {
+        showAddAlbumToPlaylistMenu(e, albumSongs);
+      });
+    }
+
+    var btnBack = doc.getElementById('fire-btn-album-back');
+    if (btnBack) {
+      btnBack.addEventListener('click', function () {
+        restoreLastSearch();
+      });
+    }
+
+  } catch (err) {
+    console.error("[FIRE] Fetch album failed:", err);
+    container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--fire-em);">载入专辑失败，请重试</div>';
+  }
+}
+
+function restoreLastSearch() {
+  if (lastSearchQueryState) {
+    currentSearchQuery = lastSearchQueryState.query;
+    currentSearchPage = lastSearchQueryState.page;
+    currentSearchSongs = lastSearchQueryState.songs;
+    lastSearchQueryState = null;
+    renderSearchResults();
+  }
 }
 
 // ─── Playlist Modifications ──────────────────────────────────────────────────

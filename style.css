@@ -403,18 +403,18 @@
     }
 
     .fire-cd-wrapper {
-        width: 120px !important;
-        height: 120px !important;
-        margin-bottom: 8px !important;
+        width: 180px !important;
+        height: 180px !important;
+        margin-bottom: 12px !important;
     }
 }
 
 /* Album Art / Spin CD */
 .fire-cd-wrapper {
     position: relative;
-    width: 140px;
-    height: 140px;
-    margin-bottom: 12px;
+    width: 240px;
+    height: 240px;
+    margin-bottom: 20px;
     flex-shrink: 0;
     display: flex;
     align-items: center;
@@ -443,11 +443,11 @@
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 28px;
-    height: 28px;
+    width: 48px;
+    height: 48px;
     border-radius: 50%;
     background: var(--fire-bg-opaque, var(--SmartThemeBlurTintColor, #111827));
-    border: 4px solid #222;
+    border: 6px solid #222;
     box-sizing: border-box;
     z-index: 2;
 }
@@ -712,18 +712,28 @@
     transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 .fire-lyric-line {
-    padding: 6px 10px;
-    font-size: 13px;
+    padding: 8px 10px;
     opacity: 0.4;
     transition: opacity 0.3s, transform 0.3s, color 0.3s;
     line-height: 1.4;
     word-break: break-all;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: center;
 }
 .fire-lyric-line.active {
     opacity: 1;
     color: var(--fire-accent-alt);
     font-weight: bold;
     transform: scale(1.05);
+}
+.fire-lyric-original {
+    font-size: 13px;
+}
+.fire-lyric-translation {
+    font-size: 11px;
+    opacity: 0.85;
 }
 
 /* Right Content / Tabs Column */
@@ -1015,4 +1025,57 @@
 }
 .fire-scroll::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.3);
+}
+
+/* Source Badges */
+.fire-source-badge {
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    margin-right: 4px;
+    font-weight: bold;
+    display: inline-block;
+    vertical-align: middle;
+    line-height: 1.2;
+}
+.fire-source-badge.netease {
+    background: rgba(234, 67, 53, 0.15);
+    color: #ea4335;
+    border: 1px solid rgba(234, 67, 53, 0.3);
+}
+.fire-source-badge.tencent {
+    background: rgba(52, 168, 83, 0.15);
+    color: #34a853;
+    border: 1px solid rgba(52, 168, 83, 0.3);
+}
+.fire-source-badge.kuwo {
+    background: rgba(251, 188, 5, 0.15);
+    color: #fbbc05;
+    border: 1px solid rgba(251, 188, 5, 0.3);
+}
+.fire-source-badge.bilibili {
+    background: rgba(66, 133, 244, 0.15);
+    color: #4285f4;
+    border: 1px solid rgba(66, 133, 244, 0.3);
+}
+
+/* Album View Header */
+.fire-album-header {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    margin-bottom: 10px;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid var(--fire-border);
+    border-radius: 6px;
+}
+.fire-album-header-title {
+    font-size: 13px;
+    font-weight: bold;
+    color: var(--fire-text);
+}
+.fire-album-header-actions {
+    display: flex;
+    align-items: center;
 }
