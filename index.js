@@ -35,18 +35,14 @@ var DEFAULT_COVER = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/
 
 // ─── DOM Helper Functions ─────────────────────────────────────────────────────
 function getDoc() {
-  try {
-    if (window.parent && window.parent.document) {
-      return window.parent.document;
-    }
-  } catch (e) {
-    console.warn("[FIRE] Cannot access window.parent.document", e);
-  }
+  // Always use the local document of the script's execution context.
+  // If SillyTavern is embedded in an iframe (e.g. portals, dashboards, mobile wrappers),
+  // window.parent refers to the outer wrapper which does not contain SillyTavern's DOM.
   return document;
 }
 
 function getWin() {
-  return window.parent || window;
+  return window;
 }
 
 function showPrompt(text, defaultValue, title) {
@@ -515,49 +511,65 @@ function createUI() {
     </div>
     
     <div class="fire-settings-dropdown" id="fire-settings-dropdown">
-      <div class="fire-settings-title">显示模式</div>
-      <label class="fire-settings-item">
-        <input type="radio" name="fire-display-mode" value="wand-modal">
-        <span>魔法棒 (普通弹窗)</span>
-      </label>
-      <label class="fire-settings-item">
-        <input type="radio" name="fire-display-mode" value="wand-fullscreen">
-        <span>魔法棒 (全屏模式)</span>
-      </label>
-      <label class="fire-settings-item">
-        <input type="radio" name="fire-display-mode" value="qr-bar">
-        <span>QR 栏 (普通弹窗)</span>
-      </label>
-      <label class="fire-settings-item">
-        <input type="radio" name="fire-display-mode" value="qr-top">
-        <span>QR 栏 (顶部滑出)</span>
-      </label>
-      <label class="fire-settings-item">
-        <input type="radio" name="fire-display-mode" value="qr-bottom">
-        <span>QR 栏 (底部滑出)</span>
-      </label>
-      <label class="fire-settings-item">
-        <input type="radio" name="fire-display-mode" value="qr-left">
-        <span>QR 栏 (左侧滑出)</span>
-      </label>
-      <label class="fire-settings-item">
-        <input type="radio" name="fire-display-mode" value="qr-right">
-        <span>QR 栏 (右侧滑出)</span>
-      </label>
+      <!-- Section 1: Display Mode -->
+      <div class="fire-settings-section">
+        <div class="fire-settings-section-header" id="fire-settings-header-display">
+          <span>显示模式</span>
+          <i class="fa-solid fa-chevron-right fire-settings-chevron"></i>
+        </div>
+        <div class="fire-settings-section-content" id="fire-settings-content-display" style="display: none;">
+          <label class="fire-settings-item">
+            <input type="radio" name="fire-display-mode" value="wand-modal">
+            <span>魔法棒 (普通弹窗)</span>
+          </label>
+          <label class="fire-settings-item">
+            <input type="radio" name="fire-display-mode" value="wand-fullscreen">
+            <span>魔法棒 (全屏模式)</span>
+          </label>
+          <label class="fire-settings-item">
+            <input type="radio" name="fire-display-mode" value="qr-bar">
+            <span>QR 栏 (普通弹窗)</span>
+          </label>
+          <label class="fire-settings-item">
+            <input type="radio" name="fire-display-mode" value="qr-top">
+            <span>QR 栏 (顶部滑出)</span>
+          </label>
+          <label class="fire-settings-item">
+            <input type="radio" name="fire-display-mode" value="qr-bottom">
+            <span>QR 栏 (底部滑出)</span>
+          </label>
+          <label class="fire-settings-item">
+            <input type="radio" name="fire-display-mode" value="qr-left">
+            <span>QR 栏 (左侧滑出)</span>
+          </label>
+          <label class="fire-settings-item">
+            <input type="radio" name="fire-display-mode" value="qr-right">
+            <span>QR 栏 (右侧滑出)</span>
+          </label>
+        </div>
+      </div>
       
-      <div class="fire-settings-title" style="margin-top: 12px; border-top: 1px solid var(--fire-border); padding-top: 8px;">播放音质</div>
-      <label class="fire-settings-item">
-        <input type="radio" name="fire-audio-quality" value="128">
-        <span>流畅 (128kbps)</span>
-      </label>
-      <label class="fire-settings-item">
-        <input type="radio" name="fire-audio-quality" value="320">
-        <span>极高 (320kbps)</span>
-      </label>
-      <label class="fire-settings-item">
-        <input type="radio" name="fire-audio-quality" value="999">
-        <span>无损 (Master/Lossless)</span>
-      </label>
+      <!-- Section 2: Audio Quality -->
+      <div class="fire-settings-section" style="margin-top: 8px; border-top: 1px solid var(--fire-border); padding-top: 8px;">
+        <div class="fire-settings-section-header" id="fire-settings-header-quality">
+          <span>播放音质</span>
+          <i class="fa-solid fa-chevron-right fire-settings-chevron"></i>
+        </div>
+        <div class="fire-settings-section-content" id="fire-settings-content-quality" style="display: none;">
+          <label class="fire-settings-item">
+            <input type="radio" name="fire-audio-quality" value="128">
+            <span>流畅 (128kbps)</span>
+          </label>
+          <label class="fire-settings-item">
+            <input type="radio" name="fire-audio-quality" value="320">
+            <span>极高 (320kbps)</span>
+          </label>
+          <label class="fire-settings-item">
+            <input type="radio" name="fire-audio-quality" value="999">
+            <span>无损 (Master/Lossless)</span>
+          </label>
+        </div>
+      </div>
     </div>
 
     <div id="fire-panel-body">
@@ -745,6 +757,29 @@ function bindUIEvents() {
     settingsDropdown.addEventListener('click', function(e) {
       e.stopPropagation();
     });
+
+    // Collapsible Settings Sections
+    var setupCollapsibleSetting = function (headerId, contentId) {
+      var header = doc.getElementById(headerId);
+      var content = doc.getElementById(contentId);
+      if (header && content) {
+        header.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var isHidden = content.style.display === 'none';
+          content.style.display = isHidden ? 'block' : 'none';
+          var chevron = header.querySelector('.fire-settings-chevron');
+          if (chevron) {
+            if (isHidden) {
+              chevron.style.transform = 'rotate(90deg)';
+            } else {
+              chevron.style.transform = 'rotate(0deg)';
+            }
+          }
+        });
+      }
+    };
+    setupCollapsibleSetting('fire-settings-header-display', 'fire-settings-content-display');
+    setupCollapsibleSetting('fire-settings-header-quality', 'fire-settings-content-quality');
   }
 
   // Display Mode Radios
@@ -1861,28 +1896,75 @@ function ensureQRButton() {
   btnContainer.appendChild(btn);
 }
 
-function initQRButtonObserver() {
+function ensureWandButton() {
+  try {
+    var doc = getDoc();
+    var menu = doc.getElementById('extensionsMenu');
+    if (!menu) return;
+
+    var existing = doc.getElementById('fire_wand_container');
+    if (existing) {
+      if (!menu.contains(existing)) {
+        menu.appendChild(existing);
+      }
+      return;
+    }
+
+    var container = doc.createElement('div');
+    container.id = 'fire_wand_container';
+    container.className = 'extension_container';
+    container.innerHTML = `
+      <div id="fire_wand_entry" class="list-group-item flex-container flexGap5">
+        <div class="fa-solid fa-music extensionsMenuExtensionButton"></div>
+        音乐
+      </div>
+    `;
+    menu.appendChild(container);
+    var wandBtn = doc.getElementById('fire_wand_entry');
+    if (wandBtn) wandBtn.addEventListener('click', togglePanel);
+  } catch (e) {
+    console.warn("[FIRE] Failed to inject Magic Wand button:", e);
+  }
+}
+
+function runSelfHealingInjection() {
+  ensureWandButton();
+  ensureQRButton();
+}
+
+function initUIInjection() {
+  runSelfHealingInjection();
+
   try {
     var doc = getDoc();
     var win = getWin();
     var MutationObserverClass = win.MutationObserver || win.parent?.MutationObserver || window.MutationObserver;
-    if (!MutationObserverClass) return;
-
-    if (qrBtnObserver) {
-      qrBtnObserver.disconnect();
-    }
-
-    qrBtnObserver = new MutationObserverClass(function () {
-      var mode = state.settings.displayMode || 'wand-modal';
-      if (mode.indexOf('qr-') === 0) {
-        ensureQRButton();
+    if (MutationObserverClass && doc.body) {
+      if (qrBtnObserver) {
+        qrBtnObserver.disconnect();
       }
-    });
-
-    qrBtnObserver.observe(doc.body, { childList: true, subtree: true });
-  } catch (e) {
-    console.warn('[FIRE] Failed to initialize QR Button Observer:', e);
+      qrBtnObserver = new MutationObserverClass(function () {
+        runSelfHealingInjection();
+      });
+      qrBtnObserver.observe(doc.body, { childList: true, subtree: true });
+    }
+  } catch (err) {
+    console.warn("[FIRE] MutationObserver initialization delayed:", err);
   }
+
+  // Interval polling fallback (runs every 1500ms)
+  if (window.fireInjectionInterval) {
+    clearInterval(window.fireInjectionInterval);
+  }
+  window.fireInjectionInterval = setInterval(function () {
+    runSelfHealingInjection();
+    if (!qrBtnObserver) {
+      var d = getDoc();
+      if (d && d.body) {
+        initUIInjection();
+      }
+    }
+  }, 1500);
 }
 
 // ─── Extension Initializer ────────────────────────────────────────────────────
@@ -1897,7 +1979,7 @@ export function init() {
 
   // Viewport height sync
   try {
-    var p = window.parent || window;
+    var p = window;
     if (p.visualViewport) {
       p.visualViewport.addEventListener('resize', syncViewportHeight, { passive: true });
       p.visualViewport.addEventListener('scroll', syncViewportHeight, { passive: true });
@@ -1907,7 +1989,7 @@ export function init() {
 
   // Responsive layout class guard (suppress animation on breakpoint switch)
   try {
-    var pw  = window.parent || window;
+    var pw  = window;
     var vw  = (pw.innerWidth || 768) > 760 ? 'desktop' : 'mobile';
     pw.addEventListener('resize', function () {
       var nv = (pw.innerWidth || 768) > 760 ? 'desktop' : 'mobile';
@@ -1922,31 +2004,8 @@ export function init() {
       updateTabUI();
     }, { passive: true });
   } catch (e) {}
-  
-  // Register entry into Magic Wand Extensions menu
-  try {
-    var doc = getDoc();
-    var menu = doc.getElementById('extensionsMenu');
-    if (menu && !doc.getElementById('fire_wand_container')) {
-      var container = doc.createElement('div');
-      container.id = 'fire_wand_container';
-      container.className = 'extension_container';
-      container.innerHTML = `
-        <div id="fire_wand_entry" class="list-group-item flex-container flexGap5">
-          <div class="fa-solid fa-music extensionsMenuExtensionButton"></div>
-          音乐
-        </div>
-      `;
-      menu.appendChild(container);
-      var wandBtn = doc.getElementById('fire_wand_entry');
-      if (wandBtn) wandBtn.addEventListener('click', togglePanel);
-    }
-  } catch (e) {
-    console.warn("[FIRE] Failed to inject Magic Wand button:", e);
-  }
 
-  // Setup MutationObserver & initial Quick Reply button render
-  initQRButtonObserver();
+  // Initialize self-healing injection observer and interval polling
+  initUIInjection();
   applyDisplayMode();
-  setTimeout(ensureQRButton, 1000);
 }
