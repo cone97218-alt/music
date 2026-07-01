@@ -35,6 +35,9 @@ var state = {
     desktopLyricsZIndex: 99999,
     desktopLyricsLeft: '',
     desktopLyricsTop: '',
+    desktopLyricsControlsEnabled: false,
+    desktopLyricsControlsType: 'buttons',
+    desktopLyricsControlsPolicy: 'always',
     searchSources: ['netease', 'joox', 'bilibili'],
     showErrorToasts: false
   }
@@ -542,6 +545,23 @@ function parseLRC(lrcText) {
   return list;
 }
 
+function togglePlayPause() {
+  if (!audio || !state.currentSong) {
+    var list = state.playlists[state.currentPlaylist] || [];
+    if (list.length > 0) {
+      playSong(list[0]);
+    } else {
+      showToast("请先在搜索栏中搜歌并添加");
+    }
+    return;
+  }
+  if (state.isPlaying) {
+    audio.pause();
+  } else {
+    audio.play().catch(e => console.error(e));
+  }
+}
+
 function handleSongEnded() {
   if (state.loopMode === 'single') {
     if (audio) {
@@ -831,6 +851,26 @@ function createUI() {
             <span>锁定歌词位置</span>
             <input type="checkbox" id="fire-setting-lyrics-lock">
           </label>
+          <label class="fire-settings-item" style="justify-content: space-between;">
+            <span>启用歌词播放控制</span>
+            <input type="checkbox" id="fire-setting-lyrics-ctrl-enable">
+          </label>
+          <div id="fire-setting-lyrics-ctrl-sub-container" style="display: none; flex-direction: column; gap: 6px; margin-top: 4px;">
+            <div class="fire-settings-sub-item" style="flex-direction: column; align-items: stretch; gap: 4px;">
+              <span style="font-size: 11px;">控制方式</span>
+              <select id="fire-setting-lyrics-ctrl-type" class="fire-select" style="padding: 4px 8px; font-size: 12px; height: 28px;">
+                <option value="buttons">独立控制按钮</option>
+                <option value="zones">区域触控 (左:上一首/中:播暂/右:下一首)</option>
+              </select>
+            </div>
+            <div class="fire-settings-sub-item" style="flex-direction: column; align-items: stretch; gap: 4px;">
+              <span style="font-size: 11px;">播放控制可用时机</span>
+              <select id="fire-setting-lyrics-ctrl-policy" class="fire-select" style="padding: 4px 8px; font-size: 12px; height: 28px;">
+                <option value="always">随时可用 (允许穿透点击)</option>
+                <option value="unlocked">仅解锁状态下可用</option>
+              </select>
+            </div>
+          </div>
           <div class="fire-settings-sub-item" style="flex-direction: column; align-items: stretch; gap: 4px;">
             <span style="font-size: 11px;">锁定切换触发方式</span>
             <select id="fire-setting-lyrics-togglemethod" class="fire-select" style="padding: 4px 8px; font-size: 12px; height: 28px;">
@@ -1127,6 +1167,20 @@ function createUI() {
   var chkLock = doc.getElementById('fire-setting-lyrics-lock');
   if (chkLock) chkLock.checked = !!state.settings.desktopLyricsLocked;
 
+  var chkCtrlEnable = doc.getElementById('fire-setting-lyrics-ctrl-enable');
+  if (chkCtrlEnable) chkCtrlEnable.checked = !!state.settings.desktopLyricsControlsEnabled;
+
+  var selectCtrlType = doc.getElementById('fire-setting-lyrics-ctrl-type');
+  if (selectCtrlType) selectCtrlType.value = state.settings.desktopLyricsControlsType || 'buttons';
+
+  var selectCtrlPolicy = doc.getElementById('fire-setting-lyrics-ctrl-policy');
+  if (selectCtrlPolicy) selectCtrlPolicy.value = state.settings.desktopLyricsControlsPolicy || 'always';
+
+  var ctrlSubContainer = doc.getElementById('fire-setting-lyrics-ctrl-sub-container');
+  if (ctrlSubContainer) {
+    ctrlSubContainer.style.display = state.settings.desktopLyricsControlsEnabled ? 'flex' : 'none';
+  }
+
   var inputTextColor = doc.getElementById('fire-setting-lyrics-textcolor');
   if (inputTextColor) inputTextColor.value = state.settings.desktopLyricsTextColor || '#ffffff';
 
@@ -1182,6 +1236,31 @@ function createUI() {
 
   // Ensure widget is generated and synchronized
   ensureDesktopLyrics(lyricsList, lastActiveLineIdx);
+  syncLyricsCtrlPolicyDropdown();
+}
+
+function syncLyricsCtrlPolicyDropdown() {
+  var doc = getDoc();
+  var selectPolicy = doc.getElementById('fire-setting-lyrics-ctrl-policy');
+  if (!selectPolicy) return;
+  
+  var optAlways = selectPolicy.querySelector('option[value="always"]');
+  if (!optAlways) return;
+  
+  var isLocked = !!state.settings.desktopLyricsLocked;
+  var ctrlType = state.settings.desktopLyricsControlsType || 'buttons';
+  
+  if (isLocked && ctrlType === 'buttons') {
+    optAlways.disabled = true;
+    if (state.settings.desktopLyricsControlsPolicy === 'always') {
+      state.settings.desktopLyricsControlsPolicy = 'unlocked';
+      selectPolicy.value = 'unlocked';
+      saveState();
+      applyDesktopLyricsSettings();
+    }
+  } else {
+    optAlways.disabled = false;
+  }
 }
 
 function bindUIEvents() {
@@ -1353,6 +1432,45 @@ function bindUIEvents() {
       state.settings.desktopLyricsLocked = !!this.checked;
       saveState();
       applyDesktopLyricsSettings();
+      syncLyricsCtrlPolicyDropdown();
+      ensureDesktopLyrics(lyricsList, lastActiveLineIdx);
+    });
+  }
+
+  // Control Buttons Switch
+  var chkCtrlEnable = doc.getElementById('fire-setting-lyrics-ctrl-enable');
+  var ctrlSubContainer = doc.getElementById('fire-setting-lyrics-ctrl-sub-container');
+  if (chkCtrlEnable) {
+    chkCtrlEnable.addEventListener('change', function () {
+      state.settings.desktopLyricsControlsEnabled = !!this.checked;
+      if (ctrlSubContainer) {
+        ctrlSubContainer.style.display = this.checked ? 'flex' : 'none';
+      }
+      saveState();
+      applyDesktopLyricsSettings();
+      syncLyricsCtrlPolicyDropdown();
+      ensureDesktopLyrics(lyricsList, lastActiveLineIdx);
+    });
+  }
+
+  // Control Buttons Type Dropdown
+  var selectCtrlType = doc.getElementById('fire-setting-lyrics-ctrl-type');
+  if (selectCtrlType) {
+    selectCtrlType.addEventListener('change', function () {
+      state.settings.desktopLyricsControlsType = this.value;
+      saveState();
+      syncLyricsCtrlPolicyDropdown();
+      ensureDesktopLyrics(lyricsList, lastActiveLineIdx);
+    });
+  }
+
+  // Control Buttons Policy Dropdown
+  var selectCtrlPolicy = doc.getElementById('fire-setting-lyrics-ctrl-policy');
+  if (selectCtrlPolicy) {
+    selectCtrlPolicy.addEventListener('change', function () {
+      state.settings.desktopLyricsControlsPolicy = this.value;
+      saveState();
+      applyDesktopLyricsSettings();
     });
   }
 
@@ -1457,23 +1575,7 @@ function bindUIEvents() {
   // Play / Pause Button
   var playBtn = doc.getElementById('fire-btn-play');
   if (playBtn) {
-    playBtn.addEventListener('click', function () {
-      if (!audio || !state.currentSong) {
-        // If nothing is playing, play first song in current playlist
-        var list = state.playlists[state.currentPlaylist] || [];
-        if (list.length > 0) {
-          playSong(list[0]);
-        } else {
-          showToast("请先在搜索栏中搜歌并添加");
-        }
-        return;
-      }
-      if (state.isPlaying) {
-        audio.pause();
-      } else {
-        audio.play().catch(e => console.error(e));
-      }
-    });
+    playBtn.addEventListener('click', togglePlayPause);
   }
 
   // Next / Prev Buttons
@@ -3020,7 +3122,11 @@ function initUIInjection() {
 // ─── Extension Initializer ────────────────────────────────────────────────────
 export function init() {
   loadState();
-  initLyricsWidget(state, getDoc, saveState);
+  initLyricsWidget(state, getDoc, saveState, {
+    playNext: playNext,
+    playPrev: playPrev,
+    togglePlay: togglePlayPause
+  });
   createUI();
 
   panelOpen = false;

@@ -3,17 +3,28 @@
 let state = null;
 let getDoc = null;
 let saveState = null;
+let controls = null;
 
-export function initLyricsWidget(sharedState, sharedGetDoc, sharedSaveState) {
+export function initLyricsWidget(sharedState, sharedGetDoc, sharedSaveState, sharedControls) {
   state = sharedState;
   getDoc = sharedGetDoc;
   saveState = sharedSaveState;
+  controls = sharedControls;
   
   // Bind global toggle events (right-click / long-press / double-tap)
   bindGlobalToggleEvents();
 }
 
 let isGlobalToggleEventsBound = false;
+
+function flashZoneFeedback(el, zone) {
+  el.classList.remove('flash-left', 'flash-middle', 'flash-right');
+  void el.offsetWidth; // Trigger reflow to restart animation
+  el.classList.add('flash-' + zone);
+  setTimeout(function() {
+    el.classList.remove('flash-' + zone);
+  }, 250);
+}
 
 function bindGlobalToggleEvents() {
   if (isGlobalToggleEventsBound) return;
@@ -126,6 +137,135 @@ function bindGlobalToggleEvents() {
       longPressTimer = null;
     }
   });
+
+  // 3. Controls Tap/Click Toggle Events (Works even when pointer-events is none or during drag cancel)
+  let ctrlTouchStartX = 0;
+  let ctrlTouchStartY = 0;
+  let ctrlTouchStartTime = 0;
+  
+  doc.addEventListener('touchstart', function(e) {
+    if (e.touches.length > 0) {
+      var touch = e.touches[0];
+      ctrlTouchStartX = touch.clientX;
+      ctrlTouchStartY = touch.clientY;
+      ctrlTouchStartTime = Date.now();
+    }
+  }, { passive: true });
+  
+  doc.addEventListener('touchend', function(e) {
+    if (!state || !state.settings.desktopLyricsEnabled || !state.settings.desktopLyricsControlsEnabled) return;
+    
+    var el = doc.getElementById('fire-desktop-lyrics');
+    if (!el) return;
+    
+    if (e.changedTouches.length > 0) {
+      var touch = e.changedTouches[0];
+      var dx = Math.abs(touch.clientX - ctrlTouchStartX);
+      var dy = Math.abs(touch.clientY - ctrlTouchStartY);
+      var duration = Date.now() - ctrlTouchStartTime;
+      
+      if (dx < 6 && dy < 6 && duration < 250) {
+        var rect = el.getBoundingClientRect();
+        var x = touch.clientX;
+        var y = touch.clientY;
+        
+        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+          if (e.target && e.target.closest && e.target.closest('.action-btn')) {
+            return;
+          }
+          var canShowControls = state.settings.desktopLyricsControlsEnabled && 
+            (state.settings.desktopLyricsControlsPolicy === 'always' || !state.settings.desktopLyricsLocked);
+            
+          if (canShowControls) {
+            var ctrlType = state.settings.desktopLyricsControlsType || 'buttons';
+            if (ctrlType === 'zones') {
+              var relativeX = x - rect.left;
+              var zoneWidth = rect.width / 3;
+              if (relativeX < zoneWidth) {
+                flashZoneFeedback(el, 'left');
+                if (controls && typeof controls.playPrev === 'function') {
+                  controls.playPrev();
+                }
+              } else if (relativeX > zoneWidth * 2) {
+                flashZoneFeedback(el, 'right');
+                if (controls && typeof controls.playNext === 'function') {
+                  controls.playNext();
+                }
+              } else {
+                flashZoneFeedback(el, 'middle');
+                if (controls && typeof controls.togglePlay === 'function') {
+                  controls.togglePlay();
+                }
+              }
+            } else {
+              el.classList.toggle('show-controls');
+            }
+          }
+        }
+      }
+    }
+  }, { passive: true });
+
+  let ctrlMouseStartX = 0;
+  let ctrlMouseStartY = 0;
+  let ctrlMouseStartTime = 0;
+  
+  doc.addEventListener('mousedown', function(e) {
+    ctrlMouseStartX = e.clientX;
+    ctrlMouseStartY = e.clientY;
+    ctrlMouseStartTime = Date.now();
+  });
+  
+  doc.addEventListener('mouseup', function(e) {
+    if (!state || !state.settings.desktopLyricsEnabled || !state.settings.desktopLyricsControlsEnabled) return;
+    
+    var el = doc.getElementById('fire-desktop-lyrics');
+    if (!el) return;
+    
+    var dx = Math.abs(e.clientX - ctrlMouseStartX);
+    var dy = Math.abs(e.clientY - ctrlMouseStartY);
+    var duration = Date.now() - ctrlMouseStartTime;
+    
+    if (dx < 4 && dy < 4 && duration < 250) {
+      var rect = el.getBoundingClientRect();
+      var x = e.clientX;
+      var y = e.clientY;
+      
+      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+        if (e.target && e.target.closest && e.target.closest('.action-btn')) {
+          return;
+        }
+        var canShowControls = state.settings.desktopLyricsControlsEnabled && 
+          (state.settings.desktopLyricsControlsPolicy === 'always' || !state.settings.desktopLyricsLocked);
+          
+        if (canShowControls) {
+          var ctrlType = state.settings.desktopLyricsControlsType || 'buttons';
+          if (ctrlType === 'zones') {
+            var relativeX = x - rect.left;
+            var zoneWidth = rect.width / 3;
+            if (relativeX < zoneWidth) {
+              flashZoneFeedback(el, 'left');
+              if (controls && typeof controls.playPrev === 'function') {
+                controls.playPrev();
+              }
+            } else if (relativeX > zoneWidth * 2) {
+              flashZoneFeedback(el, 'right');
+              if (controls && typeof controls.playNext === 'function') {
+                controls.playNext();
+              }
+            } else {
+              flashZoneFeedback(el, 'middle');
+              if (controls && typeof controls.togglePlay === 'function') {
+                controls.togglePlay();
+              }
+            }
+          } else {
+            el.classList.toggle('show-controls');
+          }
+        }
+      }
+    }
+  });
 }
 
 export function ensureDesktopLyrics(lyricsList, lastActiveLineIdx) {
@@ -151,8 +291,45 @@ export function ensureDesktopLyrics(lyricsList, lastActiveLineIdx) {
         <div class="fire-desktop-lyric-line current" id="fire-desktop-lyric-line-current">FIRE 音乐</div>
         <div class="fire-desktop-lyric-line translation" id="fire-desktop-lyric-line-translation" style="display: none;"></div>
       </div>
+      <div class="fire-desktop-lyrics-controls" id="fire-desktop-lyrics-controls">
+        <span class="action-btn ctrl-btn prev-btn" id="fire-desktop-lyrics-prev" title="上一首"><i class="fa-solid fa-backward-step"></i></span>
+        <span class="action-btn ctrl-btn play-btn" id="fire-desktop-lyrics-play" title="播放/暂停"><i class="fa-solid fa-play"></i></span>
+        <span class="action-btn ctrl-btn next-btn" id="fire-desktop-lyrics-next" title="下一首"><i class="fa-solid fa-forward-step"></i></span>
+      </div>
     `;
     doc.body.appendChild(el);
+    
+
+    
+    // Bind controls clicks
+    var prevBtn = el.querySelector('#fire-desktop-lyrics-prev');
+    var playBtn = el.querySelector('#fire-desktop-lyrics-play');
+    var nextBtn = el.querySelector('#fire-desktop-lyrics-next');
+    
+    if (prevBtn) {
+      prevBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (controls && typeof controls.playPrev === 'function') {
+          controls.playPrev();
+        }
+      });
+    }
+    if (playBtn) {
+      playBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (controls && typeof controls.togglePlay === 'function') {
+          controls.togglePlay();
+        }
+      });
+    }
+    if (nextBtn) {
+      nextBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (controls && typeof controls.playNext === 'function') {
+          controls.playNext();
+        }
+      });
+    }
     
     // Bind widget lock button click
     var widgetLockBtn = el.querySelector('#fire-desktop-lyrics-widget-lock');
@@ -250,6 +427,46 @@ export function applyDesktopLyricsSettings() {
       el.style.top = '20px';
       el.style.bottom = 'auto';
       el.style.right = 'auto';
+    }
+  }
+
+  // Set controls classes
+  if (state.settings.desktopLyricsControlsEnabled) {
+    el.classList.add('controls-enabled');
+    var ctrlType = state.settings.desktopLyricsControlsType || 'buttons';
+    if (ctrlType === 'zones') {
+      el.classList.add('controls-type-zones');
+      el.classList.remove('controls-type-buttons');
+    } else {
+      el.classList.add('controls-type-buttons');
+      el.classList.remove('controls-type-zones');
+    }
+  } else {
+    el.classList.remove('controls-enabled', 'controls-type-buttons', 'controls-type-zones');
+  }
+  
+  if (state.settings.desktopLyricsControlsPolicy === 'always') {
+    el.classList.add('controls-always');
+    el.classList.remove('controls-unlocked');
+  } else {
+    el.classList.add('controls-unlocked');
+    el.classList.remove('controls-always');
+  }
+
+  var canShowControls = state.settings.desktopLyricsControlsEnabled && 
+    (state.settings.desktopLyricsControlsPolicy === 'always' || !state.settings.desktopLyricsLocked);
+  if (!canShowControls) {
+    el.classList.remove('show-controls');
+  }
+
+  // Handle controls element visibility
+  var controlsEl = el.querySelector('#fire-desktop-lyrics-controls');
+  if (controlsEl) {
+    var ctrlType = state.settings.desktopLyricsControlsType || 'buttons';
+    if (state.settings.desktopLyricsControlsEnabled && ctrlType === 'buttons') {
+      controlsEl.style.display = 'flex';
+    } else {
+      controlsEl.style.display = 'none';
     }
   }
 }
@@ -397,6 +614,17 @@ export function updateDesktopLyrics(activeIdx, lyricsList) {
     if (transLine) {
       transLine.textContent = '';
       transLine.style.display = 'none';
+    }
+  }
+
+  if (el) {
+    var playBtn = el.querySelector('#fire-desktop-lyrics-play');
+    if (playBtn) {
+      if (state.isPlaying) {
+        playBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
+      } else {
+        playBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
+      }
     }
   }
 }
