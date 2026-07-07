@@ -54,6 +54,7 @@ var state = {
     listenTogetherLyricsCount: '5',
     searchSources: ['netease', 'joox', 'bilibili'],
     showErrorToasts: false,
+    localPlaybackEnabled: false,
     storySearch: {
       enabled:        false,
       tagTemplate:    '♪{song} - {artist}♪',
@@ -468,52 +469,58 @@ async function playSong(song) {
   }
 
   try {
-    // Quality fallbacks: 999 -> 740 -> 320 -> 192 -> 128
-    var qualities = ['999', '740', '320', '192', '128'];
-    var startQuality = state.settings.audioQuality || '999';
-    var startIndex = qualities.indexOf(startQuality);
-    if (startIndex === -1) startIndex = 0;
-
     var playUrl = null;
     var finalBr = null;
     var size = null;
     var rateLimitHit = false;
 
-    for (var idx = startIndex; idx < qualities.length; idx++) {
-      var currentBr = qualities[idx];
-      var cacheKey = `${song.source || 'netease'}_${song.id}_${currentBr}`;
-      
-      // Try URL Cache
-      var cachedUrlData = getCache('url', cacheKey);
-      if (cachedUrlData) {
-        playUrl = cachedUrlData.url;
-        finalBr = cachedUrlData.br;
-        size = cachedUrlData.size;
-        break;
-      }
+    if (song.source === 'local') {
+      playUrl = song.url;
+      finalBr = 'local';
+      size = 0;
+    } else {
+      // Quality fallbacks: 999 -> 740 -> 320 -> 192 -> 128
+      var qualities = ['999', '740', '320', '192', '128'];
+      var startQuality = state.settings.audioQuality || '999';
+      var startIndex = qualities.indexOf(startQuality);
+      if (startIndex === -1) startIndex = 0;
 
-      try {
-        var urlRes = await fetch(`https://music-api.gdstudio.xyz/api.php?types=url&source=${song.source || 'netease'}&id=${song.id}&br=${currentBr}`);
-        if (urlRes.status === 429) {
-          rateLimitHit = true;
+      for (var idx = startIndex; idx < qualities.length; idx++) {
+        var currentBr = qualities[idx];
+        var cacheKey = `${song.source || 'netease'}_${song.id}_${currentBr}`;
+        
+        // Try URL Cache
+        var cachedUrlData = getCache('url', cacheKey);
+        if (cachedUrlData) {
+          playUrl = cachedUrlData.url;
+          finalBr = cachedUrlData.br;
+          size = cachedUrlData.size;
           break;
         }
-        if (!urlRes.ok) {
-          throw new Error(`HTTP status: ${urlRes.status}`);
+
+        try {
+          var urlRes = await fetch(`https://music-api.gdstudio.xyz/api.php?types=url&source=${song.source || 'netease'}&id=${song.id}&br=${currentBr}`);
+          if (urlRes.status === 429) {
+            rateLimitHit = true;
+            break;
+          }
+          if (!urlRes.ok) {
+            throw new Error(`HTTP status: ${urlRes.status}`);
+          }
+          var urlData = await urlRes.json();
+          if (urlData && urlData.url) {
+            playUrl = urlData.url;
+            finalBr = urlData.br || currentBr;
+            size = urlData.size || 0;
+            // Cache URL data (TTL: 15 minutes)
+            setCache('url', cacheKey, { url: playUrl, br: finalBr, size: size }, 15 * 60 * 1000);
+            break;
+          } else {
+            console.warn(`[FIRE] Empty URL for quality ${currentBr}, trying next...`);
+          }
+        } catch (err) {
+          console.warn(`[FIRE] Fetch URL failed for quality ${currentBr}:`, err);
         }
-        var urlData = await urlRes.json();
-        if (urlData && urlData.url) {
-          playUrl = urlData.url;
-          finalBr = urlData.br || currentBr;
-          size = urlData.size || 0;
-          // Cache URL data (TTL: 15 minutes)
-          setCache('url', cacheKey, { url: playUrl, br: finalBr, size: size }, 15 * 60 * 1000);
-          break;
-        } else {
-          console.warn(`[FIRE] Empty URL for quality ${currentBr}, trying next...`);
-        }
-      } catch (err) {
-        console.warn(`[FIRE] Fetch URL failed for quality ${currentBr}:`, err);
       }
     }
 
@@ -537,7 +544,7 @@ async function playSong(song) {
     await audio.play();
     
     // Add positive run log
-    var brStr = finalBr === '999' ? '24bit无损' : finalBr === '740' ? '16bit无损' : finalBr + 'kbps';
+    var brStr = finalBr === 'local' ? '本地音源' : (finalBr === '999' ? '24bit无损' : finalBr === '740' ? '16bit无损' : finalBr + 'kbps');
     var sizeStr = size ? ` (${(size / 1024).toFixed(2)}MB)` : '';
     var logMsg = `正在播放: ${song.name} - 音质: ${brStr}${sizeStr}`;
     var time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
@@ -564,6 +571,31 @@ async function fetchAndParseLyrics(songId, source) {
   var cachedLyrics = getCache('lyric', cacheKey);
   if (cachedLyrics) {
     lyricsList = cachedLyrics;
+    renderLyrics();
+    updateDesktopLyrics(-1, lyricsList);
+    return;
+  }
+
+  if (source === 'local') {
+    var currentSong = state.currentSong;
+    if (currentSong && currentSong.lyricUrl) {
+      try {
+        var lyricRes = await fetch(currentSong.lyricUrl);
+        if (lyricRes.ok) {
+          var lyricText = await lyricRes.text();
+          lyricsList = parseLRC(lyricText);
+          setCache('lyric', cacheKey, lyricsList);
+          renderLyrics();
+          updateDesktopLyrics(-1, lyricsList);
+          return;
+        } else {
+          console.warn(`[FIRE] Failed to fetch local lyrics from: ${currentSong.lyricUrl}`);
+        }
+      } catch (err) {
+        console.warn("[FIRE] Failed to load local lyrics:", err);
+      }
+    }
+    lyricsList = [];
     renderLyrics();
     updateDesktopLyrics(-1, lyricsList);
     return;
@@ -1113,6 +1145,12 @@ function createUI() {
           <i class="fa-solid fa-chevron-right fire-settings-chevron"></i>
         </div>
         <div class="fire-settings-section-content" id="fire-settings-content-playlistmgr" style="display: none; padding-top: 6px;">
+          <!-- Local Music Toggle -->
+          <label class="fire-settings-item" style="display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: 13px; cursor: pointer; margin-bottom: 8px;">
+            <span>启用本地音乐</span>
+            <input type="checkbox" id="fire-setting-local-music-enable">
+          </label>
+          
           <!-- Part 1: NetEase Playlist Import -->
           <div style="margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px;">
             <span style="font-size: 11px; opacity: 0.8;">导入网易云歌单 (链接/ID)</span>
@@ -1280,6 +1318,9 @@ function createUI() {
               <button id="fire-btn-playlist-new" class="fire-btn" style="padding: 8px 10px;" title="新建歌单">
                 <i class="fa-solid fa-plus"></i>
               </button>
+              <button id="fire-btn-playlist-add-local" class="fire-btn" style="padding: 8px 10px; display: ${state.settings.localPlaybackEnabled ? '' : 'none'};" title="添加本地/直链歌曲">
+                <i class="fa-solid fa-file-audio"></i>
+              </button>
               <button id="fire-btn-playlist-rename" class="fire-btn fire-btn-normal" style="padding: 8px 10px;" title="重命名当前歌单">
                 <i class="fa-solid fa-pen-to-square"></i>
               </button>
@@ -1336,6 +1377,10 @@ function createUI() {
       radio.checked = true;
     }
   });
+
+  // 本地音乐 Settings Loading
+  var chkLocalMusic = doc.getElementById('fire-setting-local-music-enable');
+  if (chkLocalMusic) chkLocalMusic.checked = !!state.settings.localPlaybackEnabled;
 
   // Set default desktop lyrics selection
   var chkEnable = doc.getElementById('fire-setting-lyrics-enable');
@@ -1484,6 +1529,19 @@ function bindUIEvents() {
     setupCollapsibleSetting('fire-settings-header-logs', 'fire-settings-content-logs');
     setupCollapsibleSetting('fire-settings-header-playlistmgr', 'fire-settings-content-playlistmgr');
     setupCollapsibleSetting('fire-settings-header-listen', 'fire-settings-content-listen');
+  }
+
+  // Playlist Manager - Local Music Toggle Event
+  var chkLocalMusic = doc.getElementById('fire-setting-local-music-enable');
+  if (chkLocalMusic) {
+    chkLocalMusic.addEventListener('change', function () {
+      state.settings.localPlaybackEnabled = !!this.checked;
+      saveState();
+      var btnAddLocal = doc.getElementById('fire-btn-playlist-add-local');
+      if (btnAddLocal) {
+        btnAddLocal.style.display = state.settings.localPlaybackEnabled ? '' : 'none';
+      }
+    });
   }
 
   // Playlist Manager - NetEase Import Event
@@ -1924,7 +1982,7 @@ function bindUIEvents() {
     });
   }
 
-  // Playlist Actions: New, Rename, Delete
+  // Playlist Actions: New, Add Local, Rename, Delete
   var btnNew = doc.getElementById('fire-btn-playlist-new');
   if (btnNew) {
     btnNew.addEventListener('click', function () {
@@ -1941,6 +1999,39 @@ function bindUIEvents() {
         renderPlaylistOptions();
         renderPlaylistSongs();
         showToast(`歌单 "${name}" 创建成功`);
+      });
+    });
+  }
+
+  var btnAddLocal = doc.getElementById('fire-btn-playlist-add-local');
+  if (btnAddLocal) {
+    btnAddLocal.addEventListener('click', function () {
+      if (state.currentPlaylist === "__active_queue__") {
+        showToast("无法直接添加本地歌曲到当前队列，请先选择一个歌单");
+        return;
+      }
+      showAddLocalSongDialog().then(songData => {
+        if (!songData) return;
+        
+        var songId = 'local_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+        var newSong = {
+          id: songId,
+          name: songData.name,
+          artist: songData.artist,
+          album: '本地歌曲',
+          coverUrl: songData.cover || DEFAULT_COVER,
+          source: 'local',
+          url: songData.url,
+          lyricUrl: songData.lyric || null
+        };
+        
+        if (!state.playlists[state.currentPlaylist]) {
+          state.playlists[state.currentPlaylist] = [];
+        }
+        state.playlists[state.currentPlaylist].push(newSong);
+        saveState();
+        renderPlaylistSongs();
+        showToast(`已成功添加本地歌曲 "${songData.name}"`);
       });
     });
   }
@@ -2485,7 +2576,8 @@ function renderPlaylistSongs() {
       'netease': '<span class="fire-source-badge netease">网易</span>',
       'tencent': '<span class="fire-source-badge tencent">QQ</span>',
       'kuwo': '<span class="fire-source-badge kuwo">酷我</span>',
-      'bilibili': '<span class="fire-source-badge bilibili">B站</span>'
+      'bilibili': '<span class="fire-source-badge bilibili">B站</span>',
+      'local': '<span class="fire-source-badge local">本地</span>'
     };
     var badge = sourceBadges[song.source] || '<span class="fire-source-badge">其它</span>';
 
@@ -3429,6 +3521,247 @@ function initUIInjection() {
       }
     }
   }, 1500);
+}
+
+function showAddLocalSongDialog() {
+  return new Promise((resolve) => {
+    var doc = getDoc();
+    var modal = doc.createElement('div');
+    modal.style.position = 'fixed';
+    modal.style.top = '0';
+    modal.style.left = '0';
+    modal.style.width = '100vw';
+    modal.style.height = '100vh';
+    modal.style.backgroundColor = 'rgba(0,0,0,0.6)';
+    modal.style.zIndex = '999999';
+    modal.style.display = 'flex';
+    modal.style.alignItems = 'center';
+    modal.style.justifyContent = 'center';
+    modal.style.backdropFilter = 'blur(4px)';
+
+    modal.innerHTML = `
+      <div style="background: var(--fire-bg-opaque, #080d14); border: 1px solid var(--fire-border, rgba(255,255,255,0.15)); border-radius: 8px; width: 400px; padding: 20px; color: var(--fire-text, #f3f4f6); font-family: sans-serif; box-shadow: 0 4px 20px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 16px;">
+        <h3 style="margin: 0; font-size: 16px; border-bottom: 1px solid var(--fire-border); padding-bottom: 8px; color: var(--fire-text);">添加本地/直链歌曲</h3>
+        
+        <!-- 教程部分 -->
+        <div style="background: rgba(255, 255, 255, 0.05); border: 1px dashed var(--fire-border); border-radius: 6px; padding: 10px; font-size: 11px; line-height: 1.4; color: var(--fire-text); opacity: 0.9;">
+          <strong>💡 快速使用教程：</strong><br>
+          1. <strong>本地音乐</strong>：将文件放入 SillyTavern <code>public</code> 目录中（推荐新建 <code>public/scripts/extensions/third-party/FIRE/songs/</code>）并输入相对路径。<br>
+          2. <strong>网络直链</strong>：支持直接在第一栏填入完整的网络音频直链（如 <code>https://example.com/music.mp3</code>）进行流媒体播放！
+        </div>
+
+        <!-- 📂 扫描文件夹导入 -->
+        <button id="local-song-scan-folder-btn" class="fire-btn" style="padding: 6px 12px; font-size: 12px; height: 32px; display: flex; align-items: center; justify-content: center; gap: 6px; font-weight: bold;">
+          <i class="fa-solid fa-folder-open"></i> 一键扫描文件夹导入全部歌曲
+        </button>
+        <input type="file" id="local-song-folder-input" webkitdirectory directory multiple style="display: none;">
+
+        <div style="text-align: center; font-size: 11px; opacity: 0.5; margin: -4px 0;">— 或者手动添加单曲 —</div>
+
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <label style="font-size: 12px; font-weight: bold; color: var(--fire-text); opacity: 0.9;">音频相对路径/直链 *</label>
+            <input type="text" id="local-song-url" class="fire-input" style="height: 28px; padding: 4px 8px; font-size: 12px; color: var(--fire-text); background: rgba(0, 0, 0, 0.2); border: 1px solid var(--fire-border);" placeholder="输入路径后会自动解析其他字段...">
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <label style="font-size: 12px; font-weight: bold; color: var(--fire-text); opacity: 0.9;">歌曲名称 *</label>
+            <input type="text" id="local-song-name" class="fire-input" style="height: 28px; padding: 4px 8px; font-size: 12px; color: var(--fire-text); background: rgba(0, 0, 0, 0.2); border: 1px solid var(--fire-border);" placeholder="例如: 晴天">
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <label style="font-size: 12px; font-weight: bold; color: var(--fire-text); opacity: 0.9;">歌手名称</label>
+            <input type="text" id="local-song-artist" class="fire-input" style="height: 28px; padding: 4px 8px; font-size: 12px; color: var(--fire-text); background: rgba(0, 0, 0, 0.2); border: 1px solid var(--fire-border);" placeholder="例如: 周杰伦">
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <label style="font-size: 12px; font-weight: bold; color: var(--fire-text); opacity: 0.9;">封面相对路径/直链 (可选)</label>
+            <input type="text" id="local-song-cover" class="fire-input" style="height: 28px; padding: 4px 8px; font-size: 12px; color: var(--fire-text); background: rgba(0, 0, 0, 0.2); border: 1px solid var(--fire-border);" placeholder="留空则自动生成或使用默认封面">
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            <label style="font-size: 12px; font-weight: bold; color: var(--fire-text); opacity: 0.9;">歌词相对路径/直链 (可选)</label>
+            <input type="text" id="local-song-lyric" class="fire-input" style="height: 28px; padding: 4px 8px; font-size: 12px; color: var(--fire-text); background: rgba(0, 0, 0, 0.2); border: 1px solid var(--fire-border);" placeholder="留空则自动生成或不加载歌词">
+          </div>
+        </div>
+        
+        <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid var(--fire-border); padding-top: 12px;">
+          <button id="local-song-cancel" class="fire-btn fire-btn-normal" style="padding: 6px 12px; font-size: 12px; height: 30px;">取消</button>
+          <button id="local-song-ok" class="fire-btn" style="padding: 6px 12px; font-size: 12px; height: 30px;">确认添加</button>
+        </div>
+      </div>
+    `;
+
+    doc.body.appendChild(modal);
+
+    var urlInput = modal.querySelector('#local-song-url');
+    var nameInput = modal.querySelector('#local-song-name');
+    var artistInput = modal.querySelector('#local-song-artist');
+    var coverInput = modal.querySelector('#local-song-cover');
+    var lyricInput = modal.querySelector('#local-song-lyric');
+
+    var scanFolderBtn = modal.querySelector('#local-song-scan-folder-btn');
+    var folderInput = modal.querySelector('#local-song-folder-input');
+
+    // 扫描文件夹事件绑定
+    if (scanFolderBtn && folderInput) {
+      scanFolderBtn.addEventListener('click', function () {
+        folderInput.click();
+      });
+
+      folderInput.addEventListener('change', function (e) {
+        var files = e.target.files;
+        if (!files || files.length === 0) return;
+
+        showPrompt(
+          "系统将根据该文件夹下的文件自动生成歌曲、封面和歌词映射。\n请输入此文件夹在 SillyTavern 中的网页相对访问根路径：",
+          "/scripts/extensions/third-party/FIRE/songs/",
+          "自动扫描文件夹"
+        ).then(function (basePath) {
+          if (basePath === null) return;
+          basePath = basePath.trim();
+          if (!basePath.endsWith('/')) {
+            basePath += '/';
+          }
+
+          // 分组文件（按去后缀的文件名）
+          var fileGroups = {};
+          for (var i = 0; i < files.length; i++) {
+            var file = files[i];
+            var name = file.name;
+            var lastDot = name.lastIndexOf('.');
+            if (lastDot === -1) continue;
+
+            var baseName = name.substring(0, lastDot);
+            var ext = name.substring(lastDot).toLowerCase();
+
+            if (!fileGroups[baseName]) {
+              fileGroups[baseName] = {};
+            }
+
+            if (['.mp3', '.flac', '.wav', '.ogg', '.m4a'].indexOf(ext) !== -1) {
+              fileGroups[baseName].audio = name;
+            } else if (['.jpg', '.jpeg', '.png', '.webp'].indexOf(ext) !== -1) {
+              fileGroups[baseName].cover = name;
+            } else if (ext === '.lrc') {
+              fileGroups[baseName].lyric = name;
+            }
+          }
+
+          var importedCount = 0;
+          var playlist = state.playlists[state.currentPlaylist] || [];
+
+          for (var baseName in fileGroups) {
+            var group = fileGroups[baseName];
+            if (!group.audio) continue; // 没有音频文件跳过
+
+            // 从文件名解析歌名与歌手
+            var songName = baseName;
+            var artistName = '本地歌手';
+            var separators = [' - ', ' -', '- ', '-'];
+            for (var j = 0; j < separators.length; j++) {
+              var s = separators[j];
+              var idx = baseName.indexOf(s);
+              if (idx !== -1) {
+                artistName = baseName.substring(0, idx).trim();
+                songName = baseName.substring(idx + s.length).trim();
+                break;
+              }
+            }
+
+            var songId = 'local_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+            var newSong = {
+              id: songId,
+              name: songName,
+              artist: artistName,
+              album: '本地歌曲',
+              coverUrl: group.cover ? (basePath + group.cover) : DEFAULT_COVER,
+              source: 'local',
+              url: basePath + group.audio,
+              lyricUrl: group.lyric ? (basePath + group.lyric) : null
+            };
+
+            playlist.push(newSong);
+            importedCount++;
+          }
+
+          if (importedCount > 0) {
+            state.playlists[state.currentPlaylist] = playlist;
+            saveState();
+            renderPlaylistSongs();
+            showToast(`已自动扫描并成功导入 ${importedCount} 首歌曲！`);
+            modal.remove();
+            resolve(null);
+          } else {
+            showToast("所选文件夹中未找到任何音频文件（支持 mp3, flac, wav, m4a 等）");
+          }
+        });
+      });
+    }
+
+    // 单曲智能解析逻辑
+    urlInput.addEventListener('input', function () {
+      var val = urlInput.value.trim();
+      if (!val) return;
+
+      // 提取文件名
+      var lastSlash = Math.max(val.lastIndexOf('/'), val.lastIndexOf('\\'));
+      var filename = lastSlash !== -1 ? val.substring(lastSlash + 1) : val;
+
+      // 去除后缀
+      var lastDot = filename.lastIndexOf('.');
+      var nameWithoutExt = lastDot !== -1 ? filename.substring(0, lastDot) : filename;
+
+      var songName = nameWithoutExt;
+      var artistName = '';
+
+      // 检测 "歌手 - 歌名" 格式
+      var separators = [' - ', ' -', '- ', '-'];
+      for (var i = 0; i < separators.length; i++) {
+        var s = separators[i];
+        var idx = nameWithoutExt.indexOf(s);
+        if (idx !== -1) {
+          artistName = nameWithoutExt.substring(0, idx).trim();
+          songName = nameWithoutExt.substring(idx + s.length).trim();
+          break;
+        }
+      }
+
+      // 如果尚未输入或者为默认，则自动填充
+      if (!nameInput.value.trim() || nameInput.value.trim() === songName) {
+        nameInput.value = songName;
+      }
+      if ((!artistInput.value.trim() || artistInput.value.trim() === '本地歌手') && artistName) {
+        artistInput.value = artistName;
+      }
+
+      // 自动推断同名封面与歌词路径
+      var basePart = lastDot !== -1 ? val.substring(0, lastDot) : val;
+      if (!coverInput.value.trim() || coverInput.value.trim() === basePart + '.jpg') {
+        coverInput.value = basePart + '.jpg';
+      }
+      if (!lyricInput.value.trim() || lyricInput.value.trim() === basePart + '.lrc') {
+        lyricInput.value = basePart + '.lrc';
+      }
+    });
+
+    modal.querySelector('#local-song-cancel').addEventListener('click', function () {
+      modal.remove();
+      resolve(null);
+    });
+
+    modal.querySelector('#local-song-ok').addEventListener('click', function () {
+      var name = nameInput.value.trim();
+      var artist = artistInput.value.trim() || '本地歌手';
+      var url = urlInput.value.trim();
+      var cover = coverInput.value.trim();
+      var lyric = lyricInput.value.trim();
+
+      if (!name || !url) {
+        showToast("请填写歌曲名称和音频相对路径！");
+        return;
+      }
+
+      modal.remove();
+      resolve({ name: name, artist: artist, url: url, cover: cover, lyric: lyric });
+    });
+  });
 }
 
 // ─── Extension Initializer ────────────────────────────────────────────────────
