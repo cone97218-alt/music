@@ -18,6 +18,7 @@ import {
   initListenTogether,
   showFullScreenListenTogetherEditor,
   showListenTogetherHelp,
+  updateListenTogetherPrompt,
 } from './listen-together.js';
 
 // ─── Playback & App State ──────────────────────────────────────────────────────
@@ -52,6 +53,9 @@ var state = {
     listenTogetherEnabled: false,
     listenTogetherTemplate: '[一起听]\n{{user}}当前正在听：{{song}} - {{artist}}\n标签：{{tags}}\n当前歌词：\n{{lyrics}}\n你可以按照以下格式，和{{user}}分享自己喜欢的歌（不要选择同一首）： {{play_tag}}',
     listenTogetherLyricsCount: '5',
+    listenTogetherPosition: 1, // Default In-chat @ Depth
+    listenTogetherDepth: 4,     // Default depth 4
+    listenTogetherRole: 0,      // Default System (0)
     searchSources: ['netease', 'joox', 'bilibili'],
     showErrorToasts: false,
     localPlaybackEnabled: false,
@@ -402,11 +406,13 @@ function initAudio() {
     consecutiveFailures = 0; // Reset failure counter on successful play
     lastFailedSongId = null;
     updatePlaybackUI();
+    updateListenTogetherPrompt();
   });
 
   audio.addEventListener('pause', function () {
     state.isPlaying = false;
     updatePlaybackUI();
+    updateListenTogetherPrompt();
   });
 
   audio.addEventListener('timeupdate', function () {
@@ -1209,6 +1215,29 @@ function createUI() {
               <option value="all">发送全部歌词</option>
             </select>
           </div>
+          <div class="fire-settings-sub-item" style="flex-direction: column; align-items: stretch; gap: 4px; margin-top: 4px;">
+            <span style="font-size: 11px;">注入位置</span>
+            <select id="fire-setting-listen-position" class="fire-select" style="padding: 4px 8px; font-size: 12px; height: 28px;">
+              <option value="-1">不注入 (None)</option>
+              <option value="1">In-chat @ Depth (聊天中指定深度)</option>
+            </select>
+          </div>
+          <div id="fire-setting-listen-depth-container" class="fire-settings-sub-item" style="display: none; flex-direction: column; align-items: stretch; gap: 4px; margin-top: 4px;">
+            <div style="display: flex; gap: 8px;">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                <span style="font-size: 11px;">插入深度</span>
+                <input type="number" id="fire-setting-listen-depth" class="fire-textarea" style="height: 28px; padding: 4px 8px; font-size: 12px; border: 1px solid var(--fire-border); border-radius: 4px; background: rgba(0,0,0,0.25); color: inherit;" min="0" max="999" value="4">
+              </div>
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                <span style="font-size: 11px;">插入角色</span>
+                <select id="fire-setting-listen-role" class="fire-select" style="padding: 4px 8px; font-size: 12px; height: 28px;">
+                  <option value="0">System (系统)</option>
+                  <option value="1">User (用户)</option>
+                  <option value="2">Assistant (助手)</option>
+                </select>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1439,6 +1468,26 @@ function createUI() {
   var selListenLyricsCount = doc.getElementById('fire-setting-listen-lyricscount');
   if (selListenLyricsCount) {
     selListenLyricsCount.value = state.settings.listenTogetherLyricsCount || '5';
+  }
+
+  var selListenPosition = doc.getElementById('fire-setting-listen-position');
+  if (selListenPosition) {
+    selListenPosition.value = state.settings.listenTogetherPosition !== undefined ? state.settings.listenTogetherPosition : '1';
+  }
+
+  var inputListenDepth = doc.getElementById('fire-setting-listen-depth');
+  if (inputListenDepth) {
+    inputListenDepth.value = state.settings.listenTogetherDepth !== undefined ? state.settings.listenTogetherDepth : 4;
+  }
+
+  var selListenRole = doc.getElementById('fire-setting-listen-role');
+  if (selListenRole) {
+    selListenRole.value = state.settings.listenTogetherRole !== undefined ? state.settings.listenTogetherRole : '0';
+  }
+
+  var depthContainer = doc.getElementById('fire-setting-listen-depth-container');
+  if (depthContainer) {
+    depthContainer.style.display = (selListenPosition && selListenPosition.value === '1') ? 'flex' : 'none';
   }
 
   var inputLongPress = doc.getElementById('fire-setting-lyrics-longpress');
@@ -1813,6 +1862,7 @@ function bindUIEvents() {
     chkListenEnabled.addEventListener('change', function () {
       state.settings.listenTogetherEnabled = this.checked;
       saveState();
+      updateListenTogetherPrompt();
     });
   }
 
@@ -1821,6 +1871,7 @@ function bindUIEvents() {
     txtListenTemplate.addEventListener('change', function () {
       state.settings.listenTogetherTemplate = this.value;
       saveState();
+      updateListenTogetherPrompt();
     });
   }
 
@@ -1829,6 +1880,40 @@ function bindUIEvents() {
     selListenLyricsCount.addEventListener('change', function () {
       state.settings.listenTogetherLyricsCount = this.value;
       saveState();
+      updateListenTogetherPrompt();
+    });
+  }
+
+  var selListenPosition = doc.getElementById('fire-setting-listen-position');
+  if (selListenPosition) {
+    selListenPosition.addEventListener('change', function () {
+      state.settings.listenTogetherPosition = parseInt(this.value, 10);
+      saveState();
+      updateListenTogetherPrompt();
+      var depthContainer = doc.getElementById('fire-setting-listen-depth-container');
+      if (depthContainer) {
+        depthContainer.style.display = (this.value === '1') ? 'flex' : 'none';
+      }
+    });
+  }
+
+  var inputListenDepth = doc.getElementById('fire-setting-listen-depth');
+  if (inputListenDepth) {
+    inputListenDepth.addEventListener('change', function () {
+      var val = parseInt(this.value, 10);
+      if (isNaN(val) || val < 0) val = 0;
+      state.settings.listenTogetherDepth = val;
+      saveState();
+      updateListenTogetherPrompt();
+    });
+  }
+
+  var selListenRole = doc.getElementById('fire-setting-listen-role');
+  if (selListenRole) {
+    selListenRole.addEventListener('change', function () {
+      state.settings.listenTogetherRole = parseInt(this.value, 10);
+      saveState();
+      updateListenTogetherPrompt();
     });
   }
 
@@ -2393,6 +2478,7 @@ function updateLyricsHighlight() {
     }
     lastActiveLineIdx = activeIdx;
     updateDesktopLyrics(activeIdx, lyricsList);
+    updateListenTogetherPrompt();
   }
 }
 

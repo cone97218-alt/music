@@ -1,6 +1,5 @@
 // ─── listen-together.js ────────────────────────────────────────────────────────
-import { name1 } from '../../../../script.js';
-import { getContext } from '../../../extensions.js';
+import { name1, setExtensionPrompt } from '../../../../script.js';
 
 let state = null;
 let getDoc = null;
@@ -19,190 +18,39 @@ export function initListenTogether(sharedState, sharedGetDoc, sharedSaveState, s
   getLyricsList = sharedGetLyricsList;
   getLastActiveLineIdx = sharedGetLastActiveLineIdx;
 
-  // Bind SillyTavern prompt hooks
-  bindPromptHooks();
+  // Initially update prompt
+  updateListenTogetherPrompt();
 }
 
-function isUserRole(role, userName) {
-  if (typeof role !== 'string') return false;
-  var r = role.toLowerCase();
-  if (r === 'user') return true;
-  if (userName && role === userName) return true;
-  return false;
-}
+export function updateListenTogetherPrompt() {
+  if (!state) return;
 
-function injectListenTogether(chatContext) {
-  if (!chatContext) return;
+  var shouldInject = state.settings.listenTogetherEnabled && state.isPlaying && state.currentSong;
 
-  // Guard: prevent double injection during a single generation cycle
-  if (chatContext.listen_together_injected) {
+  if (!shouldInject) {
+    setExtensionPrompt('fire_listen_together', '');
     return;
   }
 
   var text = getListenTogetherPromptText();
-  if (!text) return;
-
-  var ctx = null;
-  try {
-    if (globalThis.SillyTavern && typeof globalThis.SillyTavern.getContext === 'function') {
-      ctx = globalThis.SillyTavern.getContext();
-    } else {
-      ctx = getContext();
-    }
-  } catch (e) {}
-
-  var userName = ctx ? ctx.name1 : (name1 || 'user');
-  var rawChat = ctx ? (ctx.chat || []) : [];
-  var lastUserChat = null;
-  for (var i = rawChat.length - 1; i >= 0; i--) {
-    if (rawChat[i].is_user) {
-      lastUserChat = rawChat[i];
-      break;
-    }
+  if (!text) {
+    setExtensionPrompt('fire_listen_together', '');
+    return;
   }
-  var lastUserContent = lastUserChat ? lastUserChat.mes : '';
 
-  // Case 1: Chat Completion format (e.g. OpenAI, Claude, DeepSeek API)
-  if (Array.isArray(chatContext.chat)) {
-    var userIdx = -1;
-    // Attempt 1: Content + Role Match (most precise)
-    if (lastUserContent) {
-      for (var i = chatContext.chat.length - 1; i >= 0; i--) {
-        var m = chatContext.chat[i];
-        if ((m.is_user === true || isUserRole(m.role, userName)) && m.content && m.content.includes(lastUserContent)) {
-          userIdx = i;
-          break;
-        }
-      }
-    }
-    // Attempt 2: Case-insensitive / username role Match
-    if (userIdx === -1) {
-      for (var i = chatContext.chat.length - 1; i >= 0; i--) {
-        var m = chatContext.chat[i];
-        if (m.is_user === true || isUserRole(m.role, userName)) {
-          userIdx = i;
-          break;
-        }
-      }
-    }
+  var position = state.settings.listenTogetherPosition !== undefined ? parseInt(state.settings.listenTogetherPosition, 10) : 1; // Default In-chat @ Depth
+  var depth = state.settings.listenTogetherDepth !== undefined ? parseInt(state.settings.listenTogetherDepth, 10) : 4;       // Default depth 4
+  var role = state.settings.listenTogetherRole !== undefined ? parseInt(state.settings.listenTogetherRole, 10) : 0;         // Default System (0)
+  var scan = false; // No World Info scanning needed for song lyrics
 
-    if (userIdx !== -1) {
-      var originalMsg = chatContext.chat[userIdx];
-      if (originalMsg.content && originalMsg.content.includes(text.trim())) {
-        chatContext.listen_together_injected = true;
-        return;
-      }
-      var mutatedMsg = Object.assign({}, originalMsg);
-      mutatedMsg.content = (mutatedMsg.content || '') + '\n\n' + text.trim();
-      chatContext.chat[userIdx] = mutatedMsg;
-      chatContext.listen_together_injected = true;
-      console.log('[FIRE Listen Together] Appended listen state suffix to the last user message (Chat Completion).');
-    } else {
-      var sysIdx = chatContext.chat.map(function(m) { return m.role; }).lastIndexOf('system');
-      var insertAt = sysIdx === -1 ? 0 : sysIdx + 1;
-      chatContext.chat.splice(insertAt, 0, {
-        role: 'system',
-        content: text.trim(),
-        injected: true,
-        identifier: 'listen_together_state_injection'
-      });
-      chatContext.listen_together_injected = true;
-      console.log('[FIRE Listen Together] Fallback: Injected listen state as system message (Chat Completion).');
-    }
-  }
-  // Case 2: Text Generation format (e.g. KoboldAI, TextGenWebUI API)
-  else if (Array.isArray(chatContext.finalMesSend)) {
-    var userIdx = -1;
-    // Attempt 1: Content + Role Match
-    if (lastUserContent) {
-      for (var i = chatContext.finalMesSend.length - 1; i >= 0; i--) {
-        var m = chatContext.finalMesSend[i];
-        if ((m.is_user || isUserRole(m.role, userName)) && m.message && m.message.includes(lastUserContent)) {
-          userIdx = i;
-          break;
-        }
-      }
-    }
-    // Attempt 2: Role Match
-    if (userIdx === -1) {
-      for (var i = chatContext.finalMesSend.length - 1; i >= 0; i--) {
-        var m = chatContext.finalMesSend[i];
-        if (m.is_user || isUserRole(m.role, userName)) {
-          userIdx = i;
-          break;
-        }
-      }
-    }
-
-    if (userIdx !== -1) {
-      var originalMsg = chatContext.finalMesSend[userIdx];
-      if (originalMsg.message && originalMsg.message.includes(text.trim())) {
-        chatContext.listen_together_injected = true;
-        return;
-      }
-      var mutatedMsg = Object.assign({}, originalMsg);
-      mutatedMsg.message = (mutatedMsg.message || '') + '\n\n' + text.trim();
-      chatContext.finalMesSend[userIdx] = mutatedMsg;
-      chatContext.listen_together_injected = true;
-      console.log('[FIRE Listen Together] Appended listen state suffix to the last user message (TextGen).');
-    } else {
-      if (chatContext.finalMesSend.length > 0) {
-        var lastIdx = chatContext.finalMesSend.length - 1;
-        var originalMsg = chatContext.finalMesSend[lastIdx];
-        if (originalMsg.message && originalMsg.message.includes(text.trim())) {
-          chatContext.listen_together_injected = true;
-          return;
-        }
-        var mutatedMsg = Object.assign({}, originalMsg);
-        mutatedMsg.message = (mutatedMsg.message || '') + '\n\n' + text.trim();
-        chatContext.finalMesSend[lastIdx] = mutatedMsg;
-        chatContext.listen_together_injected = true;
-        console.log('[FIRE Listen Together] Fallback: Appended listen state suffix to the last message (TextGen).');
-      } else {
-        if (chatContext.main !== undefined) {
-          if (chatContext.main.includes(text.trim())) {
-            chatContext.listen_together_injected = true;
-            return;
-          }
-          chatContext.main = (chatContext.main || '') + '\n\n' + text.trim();
-          chatContext.listen_together_injected = true;
-          console.log('[FIRE Listen Together] Fallback: Appended listen state to system prompt.');
-        }
-      }
-    }
-  }
-}
-
-function bindPromptHooks() {
-  if (!eventSource || !event_types) return;
-
-  // 1. GENERATE_BEFORE_COMBINE_PROMPTS hook (for TextGen, defers for Chat Completion)
-  eventSource.on(event_types.GENERATE_BEFORE_COMBINE_PROMPTS, async function (chatContext) {
-    try {
-      if (!state || !state.settings.listenTogetherEnabled) return;
-      if (!state.isPlaying || !state.currentSong) return;
-
-      if (chatContext && Array.isArray(chatContext.chat)) {
-        console.log('[FIRE Listen Together] Chat Completion detected, deferring injection to CHAT_COMPLETION_PROMPT_READY.');
-        return;
-      }
-      injectListenTogether(chatContext);
-    } catch (e) {
-      console.error('[FIRE Listen Together] Prompt injection failed:', e);
-    }
-  });
-
-  // 2. CHAT_COMPLETION_PROMPT_READY hook (for Chat Completion)
-  eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, async function (chatContext) {
-    try {
-      if (!state || !state.settings.listenTogetherEnabled) return;
-      if (!state.isPlaying || !state.currentSong) return;
-
-      injectListenTogether(chatContext);
-    } catch (e) {
-      console.error('[FIRE Listen Together] Chat completion prompt injection failed:', e);
-    }
-  });
+  setExtensionPrompt(
+    'fire_listen_together',
+    text,
+    position,
+    depth,
+    scan,
+    role
+  );
 }
 
 function getListenTogetherPromptText() {
@@ -488,6 +336,7 @@ export function showFullScreenListenTogetherEditor() {
     var newVal = textarea.value;
     state.settings.listenTogetherTemplate = newVal;
     saveState();
+    updateListenTogetherPrompt();
 
     // Sync back to local DOM textarea if open
     var localTextarea = document.getElementById('fire-setting-listen-template');
