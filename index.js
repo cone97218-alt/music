@@ -163,6 +163,7 @@ function handlePlaybackFailure(song, errorMsg) {
 
 var audio = null;
 var qrBtnObserver = null;
+var isInjectionPending = false;
 var currentSearchSongs = [];
 var lastSearchQueryState = null;
 var currentSearchPage = 1;
@@ -3574,39 +3575,64 @@ function runSelfHealingInjection() {
   ensureQRButton();
 }
 
-function initUIInjection() {
-  runSelfHealingInjection();
+function throttledRunSelfHealingInjection() {
+  if (isInjectionPending) return;
+  isInjectionPending = true;
+  var win = getWin();
+  var raf = win.requestAnimationFrame || window.requestAnimationFrame || function (cb) { return setTimeout(cb, 16); };
+  raf(function () {
+    runSelfHealingInjection();
+    isInjectionPending = false;
+  });
+}
 
+function initUIInjection() {
+  throttledRunSelfHealingInjection();
+
+  // 1. Subscribe to SillyTavern native eventSource events
+  try {
+    if (eventSource && event_types) {
+      eventSource.on(event_types.CHAT_CHANGED, throttledRunSelfHealingInjection);
+      eventSource.on(event_types.APP_READY, throttledRunSelfHealingInjection);
+    }
+  } catch (e) {}
+
+  // 2. Scoped MutationObserver listening on #send_form
   try {
     var doc = getDoc();
     var win = getWin();
     var MutationObserverClass = win.MutationObserver || win.parent?.MutationObserver || window.MutationObserver;
-    if (MutationObserverClass && doc.body) {
+    var targetNode = doc.getElementById('send_form') || doc.body;
+
+    if (MutationObserverClass && targetNode) {
       if (qrBtnObserver) {
         qrBtnObserver.disconnect();
       }
-      qrBtnObserver = new MutationObserverClass(function () {
-        runSelfHealingInjection();
+      qrBtnObserver = new MutationObserverClass(function (mutations) {
+        var hasChildChanges = mutations.some(function (m) { return m.type === 'childList'; });
+        if (hasChildChanges) {
+          throttledRunSelfHealingInjection();
+        }
       });
-      qrBtnObserver.observe(doc.body, { childList: true, subtree: true });
+      qrBtnObserver.observe(targetNode, { childList: true, subtree: true });
     }
   } catch (err) {
     console.warn("[FIRE] MutationObserver initialization delayed:", err);
   }
 
-  // Interval polling fallback (runs every 1500ms)
+  // 3. Low-frequency interval polling fallback (runs every 3000ms)
   if (window.fireInjectionInterval) {
     clearInterval(window.fireInjectionInterval);
   }
   window.fireInjectionInterval = setInterval(function () {
-    runSelfHealingInjection();
+    throttledRunSelfHealingInjection();
     if (!qrBtnObserver) {
       var d = getDoc();
       if (d && d.body) {
         initUIInjection();
       }
     }
-  }, 1500);
+  }, 3000);
 }
 
 function showAddLocalSongDialog() {
