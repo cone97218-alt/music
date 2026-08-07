@@ -2797,12 +2797,16 @@ async function fetchChartData(chartId, idx, forceRefresh) {
   var doc = getDoc();
   var cacheKey = 'chart_' + chartId;
 
-  var cached = !forceRefresh && _discoverCache[cacheKey];
+  var cacheObj = _discoverCache[cacheKey];
+  var isExpired = cacheObj && (Date.now() - (cacheObj._timestamp || 0) > 30 * 60 * 1000);
+  var cached = (!forceRefresh && !isExpired) && cacheObj;
+
   if (!cached) {
     try {
       var res = await fetch(`https://music-api.gdstudio.xyz/api.php?types=playlist&source=netease&id=${chartId}`);
       var data = await res.json();
       if (data && data.playlist) {
+        data._timestamp = Date.now();
         _discoverCache[cacheKey] = data;
         cached = data;
       }
