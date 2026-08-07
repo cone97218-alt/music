@@ -1508,6 +1508,7 @@ function createUI() {
               <input type="text" id="fire-search-input" class="fire-input" placeholder="输入歌名或歌手搜索...">
               <button type="submit" id="fire-search-btn" class="fire-btn">搜索</button>
             </form>
+            <div id="fire-search-source-filter" class="fire-source-filter-bar"></div>
             <div class="fire-music-list fire-scroll" id="fire-search-results">
               <div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">
                 在上方输入关键词搜索歌曲
@@ -3145,18 +3146,65 @@ function renderLyrics() {
 }
 
 // ─── List Renderers ───────────────────────────────────────────────────────────
+var currentSearchSourceFilter = 'all';
+
+var SOURCE_NAMES = {
+  'all': '全部',
+  'netease': '网易云',
+  'vkeys_tencent': 'QQ音乐',
+  'tencent': 'QQ音乐',
+  'joox': 'JOOX',
+  'bilibili': 'B站',
+  'kugou': '酷狗',
+  'kuwo': '酷我',
+  'migu': '咪咕'
+};
+
+function renderSourceFilterBar() {
+  var doc = getDoc();
+  var container = doc.getElementById('fire-search-source-filter');
+  if (!container) return;
+
+  var activeSources = state.settings.searchSources || ['netease', 'joox', 'bilibili'];
+  var filterOptions = ['all', ...activeSources];
+
+  container.innerHTML = filterOptions.map(src => {
+    var name = SOURCE_NAMES[src] || src;
+    var isActive = currentSearchSourceFilter === src ? 'active' : '';
+    return `<button class="fire-filter-chip ${isActive}" data-source="${src}">${name}</button>`;
+  }).join('');
+
+  container.querySelectorAll('.fire-filter-chip').forEach(btn => {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var targetSource = this.getAttribute('data-source');
+      currentSearchSourceFilter = targetSource;
+      renderSourceFilterBar();
+      renderSearchResults();
+    });
+  });
+}
+
 function renderSearchResults() {
   var doc = getDoc();
   var container = doc.getElementById('fire-search-results');
   var pagination = doc.getElementById('fire-search-pagination');
   if (!container) return;
 
-  if (currentSearchSongs.length === 0) {
+  renderSourceFilterBar();
+
+  var displaySongs = currentSearchSongs;
+  if (currentSearchSourceFilter !== 'all') {
+    displaySongs = currentSearchSongs.filter(s => s.source === currentSearchSourceFilter);
+  }
+
+  if (displaySongs.length === 0) {
     if (pagination) pagination.style.display = 'none';
     if (!currentSearchQuery) {
       container.innerHTML = '<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">在上方输入关键词搜索歌曲</div>';
     } else {
-      container.innerHTML = '<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">未找到匹配歌曲</div>';
+      var srcName = SOURCE_NAMES[currentSearchSourceFilter] || currentSearchSourceFilter;
+      container.innerHTML = `<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">未在【${srcName}】音源中找到匹配歌曲</div>`;
     }
     return;
   }
@@ -3168,7 +3216,7 @@ function renderSearchResults() {
   }
 
   container.innerHTML = '';
-  currentSearchSongs.forEach(song => {
+  displaySongs.forEach(song => {
     var item = doc.createElement('div');
     var isPlayingThis = state.currentSong && state.currentSong.id === song.id;
     item.className = 'fire-music-item' + (isPlayingThis ? ' playing' : '');
