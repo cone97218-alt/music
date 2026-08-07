@@ -1505,7 +1505,7 @@ function createUI() {
           <!-- Search Tab -->
           <div id="fire-tab-panel-search" class="fire-tab-panel active">
             <form id="fire-search-form" class="fire-search-form" onsubmit="return false;">
-              <input type="text" id="fire-search-input" class="fire-input" placeholder="输入歌名或歌手搜索...">
+              <input type="text" id="fire-search-input" class="fire-input" placeholder="输入歌名或歌手搜索..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
               <button type="submit" id="fire-search-btn" class="fire-btn">搜索</button>
             </form>
             <div id="fire-search-source-filter" class="fire-source-filter-bar"></div>
@@ -2289,6 +2289,13 @@ function bindUIEvents() {
   var searchForm = doc.getElementById('fire-search-form');
   var searchInput = doc.getElementById('fire-search-input');
   if (searchForm && searchInput) {
+    // Prevent key/input events from bubbling up to SillyTavern global keyboard listeners (resolves typing lag)
+    ['keydown', 'keyup', 'keypress', 'input', 'compositionstart', 'compositionend'].forEach(function(evtType) {
+      searchInput.addEventListener(evtType, function(e) {
+        e.stopPropagation();
+      });
+    });
+
     var handleSearch = function () {
       var val = searchInput.value.trim();
       if (val) {
