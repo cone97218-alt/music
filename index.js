@@ -1295,17 +1295,15 @@ function createUI() {
           
           <!-- Part 1: Multi-platform Playlist Import -->
           <div style="margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px;">
-            <span style="font-size: 11px; opacity: 0.8;">导入在线歌单 (网易云/QQ/酷狗/酷我)</span>
+            <span style="font-size: 11px; opacity: 0.8;">导入在线歌单 (网易云/酷我/酷狗UID)</span>
             <div style="display: flex; gap: 6px;">
-              <select id="fire-import-source-select" class="fire-select" style="height: 28px; padding: 2px 6px; font-size: 12px; width: 85px; flex-shrink: 0;">
+              <select id="fire-import-source-select" class="fire-select" style="height: 28px; padding: 2px 6px; font-size: 12px; width: 95px; flex-shrink: 0;">
                 <option value="auto">自动识别</option>
                 <option value="netease">网易云</option>
-                <option value="tencent">QQ音乐</option>
-                <option value="kugou">酷狗音乐</option>
                 <option value="kuwo">酷我音乐</option>
-                <option value="migu">咪咕音乐</option>
+                <option value="kugou">酷狗 (UID)</option>
               </select>
-              <input type="text" id="fire-import-netease-input" class="fire-input" style="height: 28px; padding: 4px 8px; font-size: 12px; min-width: 0; width: 100%;" placeholder="输入歌单ID或分享链接...">
+              <input type="text" id="fire-import-netease-input" class="fire-input" style="height: 28px; padding: 4px 8px; font-size: 12px; min-width: 0; width: 100%;" placeholder="输入歌单ID、链接或酷狗UID...">
               <button id="fire-import-netease-btn" class="fire-btn" style="padding: 4px 10px; font-size: 11px; height: 28px; flex-shrink: 0;">导入</button>
             </div>
           </div>
@@ -2797,16 +2795,12 @@ async function fetchChartData(chartId, idx, forceRefresh) {
   var doc = getDoc();
   var cacheKey = 'chart_' + chartId;
 
-  var cacheObj = _discoverCache[cacheKey];
-  var isExpired = cacheObj && (Date.now() - (cacheObj._timestamp || 0) > 30 * 60 * 1000);
-  var cached = (!forceRefresh && !isExpired) && cacheObj;
-
+  var cached = !forceRefresh && _discoverCache[cacheKey];
   if (!cached) {
     try {
       var res = await fetch(`https://music-api.gdstudio.xyz/api.php?types=playlist&source=netease&id=${chartId}`);
       var data = await res.json();
       if (data && data.playlist) {
-        data._timestamp = Date.now();
         _discoverCache[cacheKey] = data;
         cached = data;
       }
@@ -3921,7 +3915,7 @@ async function importPlaylistsBackup(event) {
           } else if (decision === 'merge') {
             var localSongs = state.playlists[playlistName];
             cleanedSongs.forEach(song => {
-              var exists = localSongs.some(ls => ls.id === song.id);
+              var exists = localSongs.some(ls => String(ls.id) === String(song.id));
               if (!exists) {
                 localSongs.push(song);
               }
@@ -3963,25 +3957,48 @@ async function importPlaylist(inputStr) {
   var source = selectedSource;
 
   if (source === 'auto') {
-    if (/qq\.com|y\.qq\.com/.test(trimmed)) {
-      source = 'tencent';
+    if (/kuwo\.cn/.test(trimmed)) {
+      source = 'kuwo';
     } else if (/kugou\.com/.test(trimmed)) {
       source = 'kugou';
-    } else if (/kuwo\.cn/.test(trimmed)) {
-      source = 'kuwo';
-    } else if (/migu\.cn/.test(trimmed)) {
-      source = 'migu';
+    } else if (/qq\.com|y\.qq\.com/.test(trimmed)) {
+      source = 'tencent';
     } else {
       source = 'netease';
     }
   }
 
+  if (source === 'tencent' || source === 'migu') {
+    showToast("QQ/咪咕歌单由于平台加密机制限制，暂不支持在线链接直接导入，建议导入网易云/酷我歌单");
+    return;
+  }
+
   var playlistId = '';
-  var idMatch = trimmed.match(/(?:\?id=|\/playlist\/|\/playlist\?id=|\/album\/|\/id\/|\/special\/single\/)(\w+)/i);
-  if (idMatch) {
-    playlistId = idMatch[1];
-  } else if (/^[\w-]+$/.test(trimmed)) {
-    playlistId = trimmed;
+  if (source === 'kugou') {
+    var uidMatch = trimmed.match(/[?&](?:uid|userid|specialid)=([0-9]+)/i) || trimmed.match(/\/u\/([0-9]+)/i);
+    if (uidMatch) {
+      playlistId = uidMatch[1];
+    } else if (/^[0-9]+$/.test(trimmed)) {
+      playlistId = trimmed;
+    }
+    if (!playlistId) {
+      showToast("未在链接中检测到酷狗数字 UID。请使用带有 uid= 的链接或纯数字 UID(如 569471137)");
+      return;
+    }
+  } else {
+    // Check query parameters like ?id=, &id=
+    var paramMatch = trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/i);
+    if (paramMatch) {
+      playlistId = paramMatch[1];
+    } else {
+      // Check path patterns like /playlist/xxx, /playlist_detail/xxx, /album/xxx, /special/xxx
+      var pathMatch = trimmed.match(/\/(?:playlist|songlist|playlist_detail|album|special|detail|id)\/([a-zA-Z0-9_-]+)/i);
+      if (pathMatch) {
+        playlistId = pathMatch[1];
+      } else if (/^[\w-]+$/.test(trimmed)) {
+        playlistId = trimmed;
+      }
+    }
   }
 
   if (!playlistId) {
@@ -3991,40 +4008,51 @@ async function importPlaylist(inputStr) {
 
   var sourceNames = {
     'netease': '网易云',
-    'tencent': 'QQ音乐',
-    'kugou': '酷狗音乐',
     'kuwo': '酷我音乐',
-    'migu': '咪咕音乐'
+    'kugou': '酷狗音乐'
   };
-  var sName = sourceNames[source] || source;
+  var sName = sourceNames[source] || '网易云';
   showToast(`正在拉取${sName}歌单中...`);
 
   try {
-    var res = await fetch(`https://music-api.gdstudio.xyz/api.php?types=playlist&source=${source}&id=${playlistId}`);
-    if (res.status === 429) {
-      throw new Error("歌单请求频次过高，请 5 分钟后再试");
-    }
-    if (!res.ok) {
-      throw new Error(`HTTP status: ${res.status}`);
-    }
-
-    var data = await res.json();
     var tracks = [];
-    var playlistName = `${sName}导入歌单_${playlistId}`;
+    var playlistName = source === 'kugou' ? `酷狗收藏歌单_${playlistId}` : `${sName}导入歌单_${playlistId}`;
 
-    if (Array.isArray(data)) {
-      tracks = data;
-    } else if (data && typeof data === 'object') {
-      if (data.playlist) {
-        if (Array.isArray(data.playlist)) {
-          tracks = data.playlist;
-        } else if (typeof data.playlist === 'object') {
-          playlistName = (data.playlist.name || playlistName).trim();
-          tracks = data.playlist.tracks || data.playlist.list || data.playlist.songs || [];
+    // Primary Attempt: GD Studio API (NetEase/KuWo)
+    if (source !== 'kugou') {
+      try {
+        var gdData = await fetchWithRetry(`https://music-api.gdstudio.xyz/api.php?types=playlist&source=${source}&id=${playlistId}`, {}, 2, 800);
+        if (gdData && (!gdData.detail || !gdData.detail.includes('not supported'))) {
+          if (Array.isArray(gdData)) {
+            tracks = gdData;
+          } else if (gdData && typeof gdData === 'object') {
+            if (gdData.playlist) {
+              if (Array.isArray(gdData.playlist)) {
+                tracks = gdData.playlist;
+              } else if (typeof gdData.playlist === 'object') {
+                playlistName = (gdData.playlist.name || playlistName).trim();
+                tracks = gdData.playlist.tracks || gdData.playlist.list || gdData.playlist.songs || [];
+              }
+            } else if (gdData.tracks || gdData.list || gdData.songs) {
+              playlistName = (gdData.name || gdData.title || playlistName).trim();
+              tracks = gdData.tracks || gdData.list || gdData.songs || [];
+            }
+          }
         }
-      } else if (data.tracks || data.list || data.songs) {
-        playlistName = (data.name || data.title || playlistName).trim();
-        tracks = data.tracks || data.list || data.songs || [];
+      } catch (e) {
+        console.warn('[FIRE] Primary GD Studio playlist API fetch failed, trying Meting fallback...', e);
+      }
+    }
+
+    // Meting API (supports KuGou numeric UID/IDs as well as NetEase/KuWo fallback)
+    if (!tracks || tracks.length === 0) {
+      try {
+        var metingData = await fetchWithRetry(`https://api.injahow.cn/meting/?server=${source}&type=playlist&id=${playlistId}`, {}, 2, 800);
+        if (Array.isArray(metingData) && metingData.length > 0) {
+          tracks = metingData;
+        }
+      } catch (e) {
+        console.warn('[FIRE] Meting playlist API fetch failed:', e);
       }
     }
 
@@ -4034,7 +4062,8 @@ async function importPlaylist(inputStr) {
     }
 
     var importedSongs = tracks.map(track => {
-      var songId = track.id || track.songid || track.mid || ('id_' + Math.random().toString(36).substr(2, 6));
+      var urlIdMatch = (track.url || '').match(/[?&]id=([a-zA-Z0-9_-]+)/);
+      var songId = track.id || track.songid || track.mid || (urlIdMatch ? urlIdMatch[1] : ('id_' + Math.random().toString(36).substr(2, 6)));
       var songName = track.name || track.songname || track.title || '未知歌曲';
 
       var artistName = '未知歌手';
@@ -4101,7 +4130,11 @@ async function importPlaylist(inputStr) {
     showToast(msg);
   } catch (err) {
     console.error("[FIRE] Import playlist failed:", err);
-    triggerError("歌单导入失败: " + err.message);
+    var errMsg = err.message || '';
+    if (errMsg.includes('Failed to fetch') || errMsg.includes('NetworkError') || errMsg.includes('fetch')) {
+      errMsg = "网络连接异常/接口被拦截 (请检查网络或代理软件)";
+    }
+    triggerError("歌单导入失败: " + errMsg);
   }
 }
 
