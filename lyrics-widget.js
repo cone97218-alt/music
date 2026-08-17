@@ -423,25 +423,42 @@ export function applyDesktopLyricsSettings() {
   }
   el.style.setProperty('z-index', zIndexVal.toString(), 'important');
   
-  // Apply font size
-  var curLine = el.querySelector('.fire-desktop-lyric-line.current');
-  var transLine = el.querySelector('.fire-desktop-lyric-line.translation');
-  var baseSize = state.settings.desktopLyricsFontSize || 16;
-  if (curLine) curLine.style.fontSize = baseSize + 'px';
-  if (transLine) transLine.style.fontSize = Math.max(12, Math.round(baseSize * 0.75)) + 'px';
-  
-  // Apply text alignment
-  var alignVal = state.settings.desktopLyricsAlign || 'center';
-  el.style.textAlign = alignVal;
-  var lyricLines = el.querySelectorAll('.fire-desktop-lyric-line');
-  lyricLines.forEach(function(line) {
-    line.style.textAlign = alignVal;
-  });
-  
+  // Apply padding (container margin/spacing)
+  var padVal = state.settings.desktopLyricsPadding !== undefined ? parseInt(state.settings.desktopLyricsPadding, 10) : 14;
+  if (isNaN(padVal) || padVal < 2) padVal = 14;
+  var padY = Math.max(4, Math.round(padVal * 0.75));
+  var padX = Math.max(6, Math.round(padVal * 1.35));
+  el.style.padding = `${padY}px ${padX}px`;
+
+  // Apply width
+  var widthVal = state.settings.desktopLyricsWidth !== undefined ? parseInt(state.settings.desktopLyricsWidth, 10) : 0;
+  if (!isNaN(widthVal) && widthVal > 0) {
+    el.style.width = widthVal + 'px';
+    el.style.minWidth = 'unset';
+    el.style.maxWidth = '95vw';
+  } else {
+    el.style.width = 'auto';
+    el.style.minWidth = '280px';
+    el.style.maxWidth = '600px';
+  }
+
+  // Apply height
+  var heightVal = state.settings.desktopLyricsHeight !== undefined ? parseInt(state.settings.desktopLyricsHeight, 10) : 0;
+  if (!isNaN(heightVal) && heightVal > 0) {
+    el.style.height = heightVal + 'px';
+    el.style.minHeight = 'unset';
+  } else {
+    el.style.height = 'auto';
+    el.style.minHeight = 'unset';
+  }
+
+  // Apply typography (font size & alignment) to all current and context lines
+  applyDesktopLyricsLineStyles(el);
+
   // Convert hex background color to rgba with opacity
   var bgColor = state.settings.desktopLyricsBgColor || '#080d14';
   var opacity = (state.settings.desktopLyricsBgOpacity !== undefined ? state.settings.desktopLyricsBgOpacity : 60) / 100;
-  
+
   // Basic parsing for hex to rgb
   var r = 8, g = 13, b = 20; // Default '#080d14'
   if (bgColor.startsWith('#')) {
@@ -634,6 +651,37 @@ function bindDesktopLyricsDrag(el) {
   }
 }
 
+function escapeHtml(str) {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+export function applyDesktopLyricsLineStyles(el) {
+  if (!el || !state) return;
+  var alignVal = state.settings.desktopLyricsAlign || 'center';
+  var baseSize = state.settings.desktopLyricsFontSize || 16;
+
+  var curLine = el.querySelector('.fire-desktop-lyric-line.current');
+  var transLine = el.querySelector('.fire-desktop-lyric-line.translation');
+  var contextLines = el.querySelectorAll('.fire-desktop-lyric-line.context');
+
+  if (curLine) curLine.style.fontSize = baseSize + 'px';
+  if (transLine) transLine.style.fontSize = Math.max(12, Math.round(baseSize * 0.75)) + 'px';
+  contextLines.forEach(function(cline) {
+    cline.style.fontSize = Math.max(11, Math.round(baseSize * 0.82)) + 'px';
+  });
+
+  var lyricLines = el.querySelectorAll('.fire-desktop-lyric-line');
+  lyricLines.forEach(function(line) {
+    line.style.textAlign = alignVal;
+  });
+}
+
 export function updateDesktopLyrics(activeIdx, lyricsList) {
   if (!state || !getDoc) return;
   
@@ -643,39 +691,64 @@ export function updateDesktopLyrics(activeIdx, lyricsList) {
     ensureDesktopLyrics(lyricsList, activeIdx);
     return;
   }
-  var curLine = doc.getElementById('fire-desktop-lyric-line-current');
-  var transLine = doc.getElementById('fire-desktop-lyric-line-translation');
-  if (!curLine) return;
+  if (!el) return;
+
+  var contentEl = el.querySelector('.fire-desktop-lyrics-content');
+  if (!contentEl) return;
   
   if (!state.settings.desktopLyricsEnabled) return;
   
+  var contextCount = parseInt(state.settings.desktopLyricsContextCount, 10) || 0;
+
   if (lyricsList && lyricsList.length > 0 && activeIdx >= 0 && activeIdx < lyricsList.length) {
-    var item = lyricsList[activeIdx];
-    curLine.textContent = item.text || '...';
-    if (transLine) {
-      transLine.textContent = item.translation || '';
-      transLine.style.display = item.translation ? 'block' : 'none';
+    var html = '';
+    
+    // Previous context lines
+    if (contextCount > 0) {
+      var startIdx = Math.max(0, activeIdx - contextCount);
+      for (var i = startIdx; i < activeIdx; i++) {
+        var prevText = lyricsList[i].text || '...';
+        html += `<div class="fire-desktop-lyric-line context prev">${escapeHtml(prevText)}</div>`;
+      }
     }
+    
+    // Current line
+    var curItem = lyricsList[activeIdx];
+    html += `<div class="fire-desktop-lyric-line current" id="fire-desktop-lyric-line-current">${escapeHtml(curItem.text || '...')}</div>`;
+    if (curItem.translation) {
+      html += `<div class="fire-desktop-lyric-line translation" id="fire-desktop-lyric-line-translation">${escapeHtml(curItem.translation)}</div>`;
+    }
+    
+    // Next context lines
+    if (contextCount > 0) {
+      var endIdx = Math.min(lyricsList.length - 1, activeIdx + contextCount);
+      for (var j = activeIdx + 1; j <= endIdx; j++) {
+        var nextText = lyricsList[j].text || '...';
+        html += `<div class="fire-desktop-lyric-line context next">${escapeHtml(nextText)}</div>`;
+      }
+    }
+    
+    contentEl.innerHTML = html;
   } else {
+    var fallbackText = 'FIRE 音乐';
     if (state.currentSong) {
-      curLine.textContent = state.currentSong.name + ' - ' + (Array.isArray(state.currentSong.artist) ? state.currentSong.artist.join(' / ') : state.currentSong.artist);
-    } else {
-      curLine.textContent = 'FIRE 音乐';
+      fallbackText = state.currentSong.name + ' - ' + (Array.isArray(state.currentSong.artist) ? state.currentSong.artist.join(' / ') : state.currentSong.artist);
     }
-    if (transLine) {
-      transLine.textContent = '';
-      transLine.style.display = 'none';
-    }
+    contentEl.innerHTML = `
+      <div class="fire-desktop-lyric-line current" id="fire-desktop-lyric-line-current">${escapeHtml(fallbackText)}</div>
+      <div class="fire-desktop-lyric-line translation" id="fire-desktop-lyric-line-translation" style="display: none;"></div>
+    `;
   }
 
-  if (el) {
-    var playBtn = el.querySelector('#fire-desktop-lyrics-play');
-    if (playBtn) {
-      if (state.isPlaying) {
-        playBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
-      } else {
-        playBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
-      }
+  // Re-apply typography and styles to freshly rendered lines
+  applyDesktopLyricsLineStyles(el);
+
+  var playBtn = el.querySelector('#fire-desktop-lyrics-play');
+  if (playBtn) {
+    if (state.isPlaying) {
+      playBtn.innerHTML = '<i class="fa-solid fa-pause"></i>';
+    } else {
+      playBtn.innerHTML = '<i class="fa-solid fa-play"></i>';
     }
   }
 }

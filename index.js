@@ -50,6 +50,10 @@ var state = {
     desktopLyricsControlsType: 'buttons',
     desktopLyricsControlsPolicy: 'always',
     desktopLyricsAlign: 'center',
+    desktopLyricsContextCount: 0,
+    desktopLyricsWidth: 0,
+    desktopLyricsHeight: 0,
+    desktopLyricsPadding: 14,
     listenTogetherEnabled: false,
     listenTogetherTemplate: '[一起听]\n{{user}}当前正在听：{{song}} - {{artist}}\n标签：{{tags}}\n当前歌词：\n{{lyrics}}\n你可以按照以下格式，和{{user}}分享自己喜欢的歌（不要选择同一首）： {{play_tag}}',
     listenTogetherLyricsCount: '5',
@@ -1198,12 +1202,42 @@ function createUI() {
             </div>
             <input type="range" id="fire-setting-lyrics-bgopacity" min="0" max="100">
           </div>
+          <div class="fire-settings-sub-item" style="flex-direction: column; align-items: stretch; gap: 4px; margin-top: 4px;">
+            <span style="font-size: 11px;">歌词显示行数</span>
+            <select id="fire-setting-lyrics-contextcount" class="fire-select" style="padding: 4px 8px; font-size: 12px; height: 28px;">
+              <option value="0">单行模式 (仅当前句)</option>
+              <option value="1">前后各 1 行 (共 3 行)</option>
+              <option value="2">前后各 2 行 (共 5 行)</option>
+              <option value="3">前后各 3 行 (共 7 行)</option>
+            </select>
+          </div>
           <div class="fire-settings-sub-item-slider" style="margin-top: 8px;">
             <div style="display: flex; justify-content: space-between; font-size: 11px;">
               <span>歌词字号大小</span>
               <span id="fire-setting-lyrics-fontsize-val">16px</span>
             </div>
             <input type="range" id="fire-setting-lyrics-fontsize" min="12" max="32">
+          </div>
+          <div class="fire-settings-sub-item-slider" style="margin-top: 8px;">
+            <div style="display: flex; justify-content: space-between; font-size: 11px;">
+              <span>背景条宽度</span>
+              <span id="fire-setting-lyrics-width-val">自适应</span>
+            </div>
+            <input type="range" id="fire-setting-lyrics-width" min="0" max="800" step="20">
+          </div>
+          <div class="fire-settings-sub-item-slider" style="margin-top: 8px;">
+            <div style="display: flex; justify-content: space-between; font-size: 11px;">
+              <span>背景条高度</span>
+              <span id="fire-setting-lyrics-height-val">自适应</span>
+            </div>
+            <input type="range" id="fire-setting-lyrics-height" min="0" max="400" step="10">
+          </div>
+          <div class="fire-settings-sub-item-slider" style="margin-top: 8px;">
+            <div style="display: flex; justify-content: space-between; font-size: 11px;">
+              <span>背景条边距 (宽距)</span>
+              <span id="fire-setting-lyrics-padding-val">14px</span>
+            </div>
+            <input type="range" id="fire-setting-lyrics-padding" min="4" max="30" step="1">
           </div>
           <div class="fire-settings-sub-item" style="justify-content: flex-end; margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 8px;">
             <button id="fire-setting-lyrics-resetpos" class="fire-btn fire-btn-normal" style="padding: 4px 10px; font-size: 11px; height: 26px;">重置歌词位置 (顶部居中)</button>
@@ -1637,11 +1671,32 @@ function createUI() {
   if (inputBgOpacity) inputBgOpacity.value = initialOpacity;
   if (valOpacity) valOpacity.textContent = initialOpacity + '%';
 
+  var selectContextCount = doc.getElementById('fire-setting-lyrics-contextcount');
+  if (selectContextCount) selectContextCount.value = state.settings.desktopLyricsContextCount !== undefined ? state.settings.desktopLyricsContextCount.toString() : '0';
+
   var inputFontSize = doc.getElementById('fire-setting-lyrics-fontsize');
   var valFontSize = doc.getElementById('fire-setting-lyrics-fontsize-val');
   var initialFontSize = state.settings.desktopLyricsFontSize !== undefined ? state.settings.desktopLyricsFontSize : 16;
   if (inputFontSize) inputFontSize.value = initialFontSize;
   if (valFontSize) valFontSize.textContent = initialFontSize + 'px';
+
+  var inputWidth = doc.getElementById('fire-setting-lyrics-width');
+  var valWidth = doc.getElementById('fire-setting-lyrics-width-val');
+  var initialWidth = state.settings.desktopLyricsWidth !== undefined ? state.settings.desktopLyricsWidth : 0;
+  if (inputWidth) inputWidth.value = initialWidth;
+  if (valWidth) valWidth.textContent = initialWidth === 0 ? '自适应' : initialWidth + 'px';
+
+  var inputHeight = doc.getElementById('fire-setting-lyrics-height');
+  var valHeight = doc.getElementById('fire-setting-lyrics-height-val');
+  var initialHeight = state.settings.desktopLyricsHeight !== undefined ? state.settings.desktopLyricsHeight : 0;
+  if (inputHeight) inputHeight.value = initialHeight;
+  if (valHeight) valHeight.textContent = initialHeight === 0 ? '自适应' : initialHeight + 'px';
+
+  var inputPadding = doc.getElementById('fire-setting-lyrics-padding');
+  var valPadding = doc.getElementById('fire-setting-lyrics-padding-val');
+  var initialPadding = state.settings.desktopLyricsPadding !== undefined ? state.settings.desktopLyricsPadding : 14;
+  if (inputPadding) inputPadding.value = initialPadding;
+  if (valPadding) valPadding.textContent = initialPadding + 'px';
 
   var inputToggleMethod = doc.getElementById('fire-setting-lyrics-togglemethod');
   if (inputToggleMethod) inputToggleMethod.value = state.settings.desktopLyricsToggleMethod || 'none';
@@ -2084,6 +2139,16 @@ function bindUIEvents() {
     });
   }
 
+  // Context Count Selector
+  var selectContextCount = doc.getElementById('fire-setting-lyrics-contextcount');
+  if (selectContextCount) {
+    selectContextCount.addEventListener('change', function () {
+      state.settings.desktopLyricsContextCount = parseInt(this.value, 10) || 0;
+      saveState();
+      updateDesktopLyrics(lastActiveLineIdx, lyricsList);
+    });
+  }
+
   // Font Size Slider
   var inputFontSize = doc.getElementById('fire-setting-lyrics-fontsize');
   var valFontSize = doc.getElementById('fire-setting-lyrics-fontsize-val');
@@ -2092,6 +2157,45 @@ function bindUIEvents() {
       var val = parseInt(this.value, 10);
       state.settings.desktopLyricsFontSize = val;
       if (valFontSize) valFontSize.textContent = val + 'px';
+      saveState();
+      applyDesktopLyricsSettings();
+    });
+  }
+
+  // Width Slider
+  var inputWidth = doc.getElementById('fire-setting-lyrics-width');
+  var valWidth = doc.getElementById('fire-setting-lyrics-width-val');
+  if (inputWidth) {
+    inputWidth.addEventListener('input', function () {
+      var val = parseInt(this.value, 10) || 0;
+      state.settings.desktopLyricsWidth = val;
+      if (valWidth) valWidth.textContent = val === 0 ? '自适应' : val + 'px';
+      saveState();
+      applyDesktopLyricsSettings();
+    });
+  }
+
+  // Height Slider
+  var inputHeight = doc.getElementById('fire-setting-lyrics-height');
+  var valHeight = doc.getElementById('fire-setting-lyrics-height-val');
+  if (inputHeight) {
+    inputHeight.addEventListener('input', function () {
+      var val = parseInt(this.value, 10) || 0;
+      state.settings.desktopLyricsHeight = val;
+      if (valHeight) valHeight.textContent = val === 0 ? '自适应' : val + 'px';
+      saveState();
+      applyDesktopLyricsSettings();
+    });
+  }
+
+  // Padding Slider
+  var inputPadding = doc.getElementById('fire-setting-lyrics-padding');
+  var valPadding = doc.getElementById('fire-setting-lyrics-padding-val');
+  if (inputPadding) {
+    inputPadding.addEventListener('input', function () {
+      var val = parseInt(this.value, 10) || 14;
+      state.settings.desktopLyricsPadding = val;
+      if (valPadding) valPadding.textContent = val + 'px';
       saveState();
       applyDesktopLyricsSettings();
     });
