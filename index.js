@@ -34,6 +34,7 @@ var state = {
   activeQueue: [],
   settings: {
     displayMode: 'wand-modal',
+    statusBarAvoidance: true,
     audioQuality: '999',
     desktopLyricsEnabled: false,
     desktopLyricsLocked: false,
@@ -267,6 +268,9 @@ function loadState() {
     var savedSettings = localStorage.getItem('fire_settings');
     if (savedSettings) {
       state.settings = Object.assign({}, state.settings, JSON.parse(savedSettings));
+      if (state.settings.statusBarAvoidance === undefined) {
+        state.settings.statusBarAvoidance = true;
+      }
     }
 
     var savedQueue = localStorage.getItem('fire_active_queue');
@@ -1100,6 +1104,12 @@ function createUI() {
             <input type="radio" name="fire-display-mode" value="qr-right">
             <span>QR 栏 (右侧滑出)</span>
           </label>
+          <div style="margin-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 8px;">
+            <label class="fire-settings-item" style="justify-content: space-between;">
+              <span title="全屏或手机端高度全屏时为顶部状态栏预留安全距离，避免遮挡按钮">状态栏避让</span>
+              <input type="checkbox" id="fire-setting-status-bar-avoidance">
+            </label>
+          </div>
         </div>
       </div>
       
@@ -1620,6 +1630,12 @@ function createUI() {
     }
   });
 
+  // Set default status bar avoidance selection
+  var chkStatusBarAvoid = doc.getElementById('fire-setting-status-bar-avoidance');
+  if (chkStatusBarAvoid) {
+    chkStatusBarAvoid.checked = state.settings.statusBarAvoidance !== false;
+  }
+
   // Set default audio quality selection
   if (!state.settings.audioQuality) {
     state.settings.audioQuality = '999';
@@ -1990,6 +2006,17 @@ function bindUIEvents() {
       showToast("显示模式已更改");
     });
   });
+
+  // Status Bar Avoidance Toggle
+  var chkStatusBarAvoid = doc.getElementById('fire-setting-status-bar-avoidance');
+  if (chkStatusBarAvoid) {
+    chkStatusBarAvoid.addEventListener('change', function () {
+      state.settings.statusBarAvoidance = !!this.checked;
+      saveState();
+      applyStatusBarAvoidance();
+      showToast(this.checked ? "已开启状态栏避让" : "已关闭状态栏避让");
+    });
+  }
 
   // Audio Quality Radios
   var qualityRadios = doc.querySelectorAll('input[name="fire-audio-quality"]');
@@ -4327,6 +4354,18 @@ function applyDisplayMode() {
 
   ensureQRButton();
   ensureWandButton();
+  applyStatusBarAvoidance();
+}
+
+function applyStatusBarAvoidance() {
+  var doc = getDoc();
+  var panel = doc.getElementById('fire-panel');
+  if (!panel) return;
+  if (state.settings.statusBarAvoidance !== false) {
+    panel.classList.add('fire-status-bar-avoid');
+  } else {
+    panel.classList.remove('fire-status-bar-avoid');
+  }
 }
 
 // ─── Quick Reply (QR) Button Persistence ──────────────────────────────────────

@@ -260,15 +260,34 @@
     padding-bottom: 16px;
 }
 
+/* ─── Status Bar Avoidance (Mobile & Fullscreen) ─── */
+#fire-panel.fire-status-bar-avoid {
+    --fire-status-bar-inset: env(safe-area-inset-top, 0px);
+}
+@media (max-width: 760px) {
+    #fire-panel.fire-status-bar-avoid {
+        --fire-status-bar-inset: max(env(safe-area-inset-top, 0px), 25px);
+    }
+}
+#fire-panel.fire-status-bar-avoid.fire-qr-bottom {
+    --fire-status-bar-inset: 0px !important;
+}
+@media (min-width: 761px) {
+    #fire-panel.fire-status-bar-avoid:not(.fire-fullscreen):not(.fire-qr-top):not(.fire-qr-left):not(.fire-qr-right) {
+        --fire-status-bar-inset: 0px !important;
+    }
+}
+
 /* Panel Header */
 .fire-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 20px;
+    padding: calc(14px + var(--fire-status-bar-inset, 0px)) 20px 14px 20px;
     border-bottom: 1px solid var(--fire-border);
     font-weight: bold;
     user-select: none;
+    box-sizing: border-box;
 }
 .fire-header-title {
     display: flex;
@@ -304,7 +323,7 @@
 /* Panel Settings Dropdown */
 .fire-settings-dropdown {
     position: absolute;
-    top: 55px;
+    top: calc(55px + var(--fire-status-bar-inset, 0px));
     right: 10px;
     width: 280px;
     max-width: calc(100% - 20px);
@@ -316,7 +335,7 @@
     display: none;
     padding: 12px;
     box-sizing: border-box;
-    max-height: 80vh;
+    max-height: calc(80vh - var(--fire-status-bar-inset, 0px));
     overflow-y: auto;
     overflow-x: hidden;
     touch-action: pan-y;
@@ -1037,7 +1056,7 @@
 /* Toast Message */
 .fire-toast {
     position: fixed;
-    top: 24px;
+    top: max(24px, calc(env(safe-area-inset-top, 0px) + 12px));
     left: 50%;
     transform: translate(-50%, -50px);
     background: var(--SmartThemeBlurTintColor, rgba(8, 13, 20, 0.85)) !important;
