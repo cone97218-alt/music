@@ -384,10 +384,16 @@
 
 /* 鼠标悬停、触摸或拖拽时立即弹回完整显示 */
 .fire-float-ball:hover,
+.fire-float-ball.is-hovered,
+.fire-float-ball.show-pill,
 .fire-float-ball:focus-within,
 .fire-float-ball.dragging,
 .fire-float-ball.docked-left:hover,
-.fire-float-ball.docked-right:hover {
+.fire-float-ball.docked-left.is-hovered,
+.fire-float-ball.docked-left.show-pill,
+.fire-float-ball.docked-right:hover,
+.fire-float-ball.docked-right.is-hovered,
+.fire-float-ball.docked-right.show-pill {
     transform: translateX(0) scale(1.05);
     opacity: 1;
 }
@@ -511,16 +517,36 @@
 }
 
 .fire-float-pill.pill-left {
-    right: calc(100% + 8px);
+    right: calc(100% + 6px);
     left: auto;
 }
 
 .fire-float-pill.pill-right {
-    left: calc(100% + 8px);
+    left: calc(100% + 6px);
     right: auto;
 }
 
+/* 隐形交互桥接层（Hover Bridge）：彻底消除球体与胶囊之间的缝隙死区，防止鼠标移动时丢失悬停状态 */
+.fire-float-pill::before {
+    content: '';
+    position: absolute;
+    top: -10px;
+    bottom: -10px;
+    pointer-events: auto;
+}
+
+.fire-float-pill.pill-right::before {
+    left: -18px;
+    width: 24px;
+}
+
+.fire-float-pill.pill-left::before {
+    right: -18px;
+    width: 24px;
+}
+
 .fire-float-ball:hover .fire-float-pill,
+.fire-float-ball.is-hovered .fire-float-pill,
 .fire-float-ball.show-pill .fire-float-pill {
     opacity: 1;
     pointer-events: auto;
@@ -532,6 +558,7 @@
     flex-direction: column;
     max-width: 130px;
     overflow: hidden;
+    cursor: pointer;
 }
 
 .fire-float-pill-title {

@@ -2366,7 +2366,6 @@ function createUI() {
   ball.id = 'fire-float-ball';
   ball.className = 'fire-float-ball';
   ball.style.display = 'none';
-  ball.title = 'FIRE 音乐播放器 (点击展开，可拖动)';
   ball.innerHTML = `
     <div class="fire-float-ball-inner" id="fire-float-ball-inner">
       <img id="fire-float-ball-cover" style="display: none;" alt="cover" />
@@ -5700,8 +5699,7 @@ function updateFloatBallUI() {
   ball.classList.toggle('playing', !!state.isPlaying);
 
   if (state.currentSong) {
-    var title = (state.currentSong.name || '未知曲目') + ' - ' + (state.currentSong.artist || '未知歌手');
-    ball.title = title + ' (点击展开播放器，可拖拽)';
+    ball.removeAttribute('title');
     if (pillTitle) pillTitle.textContent = state.currentSong.name || '未知曲目';
     if (pillArtist) pillArtist.textContent = state.currentSong.artist || '未知歌手';
 
@@ -5726,7 +5724,7 @@ function updateFloatBallUI() {
       }
     }
   } else {
-    ball.title = 'FIRE 音乐播放器 (点击展开，可拖拽)';
+    ball.removeAttribute('title');
     if (pillTitle) pillTitle.textContent = 'FIRE 音乐';
     if (pillArtist) pillArtist.textContent = '暂无播放曲目';
     if (coverImg) coverImg.style.display = 'none';
@@ -5823,6 +5821,7 @@ function minimizePlayer(isMin) {
   } else {
     if (ball) {
       cancelFloatBallAutoHide(ball);
+      ball.classList.remove('is-hovered', 'show-pill');
       ball.style.display = 'none';
     }
     if (!panelOpen) {
@@ -5865,12 +5864,37 @@ function bindFloatBallEvents(ball) {
     });
   }
 
-  // Hover listeners for auto-hide
+  // Mini Hover Capsule Pill - Clicking song title area opens full player
+  var pillInfo = ball.querySelector('.fire-float-pill-info');
+  if (pillInfo) {
+    pillInfo.title = '点击展开播放器';
+    pillInfo.addEventListener('click', function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      minimizePlayer(false);
+    });
+  }
+
+  // Hover management with grace period for smooth desktop cursor transition
+  var ballHoverTimer = null;
   ball.addEventListener('mouseenter', function() {
+    if (ballHoverTimer) {
+      clearTimeout(ballHoverTimer);
+      ballHoverTimer = null;
+    }
     cancelFloatBallAutoHide(ball);
+    ball.classList.add('is-hovered');
   });
-  ball.addEventListener('mouseleave', function() {
-    if (!isDragging) scheduleFloatBallAutoHide(ball);
+
+  ball.addEventListener('mouseleave', function(e) {
+    if (isDragging) return;
+    if (e.relatedTarget && ball.contains(e.relatedTarget)) return;
+
+    if (ballHoverTimer) clearTimeout(ballHoverTimer);
+    ballHoverTimer = setTimeout(function() {
+      ball.classList.remove('is-hovered');
+      scheduleFloatBallAutoHide(ball);
+    }, 350);
   });
 
   // Window resize listener
@@ -5915,10 +5939,15 @@ function bindFloatBallEvents(ball) {
   };
 
   ball.addEventListener('mousedown', function(e) {
-    if (e.target.closest('.fire-pill-btn')) {
+    if (e.target.closest('.fire-pill-btn') || e.target.closest('.fire-float-pill-info')) {
       return;
     }
+    if (ballHoverTimer) {
+      clearTimeout(ballHoverTimer);
+      ballHoverTimer = null;
+    }
     cancelFloatBallAutoHide(ball);
+    ball.classList.remove('is-hovered');
     ball.classList.add('dragging');
     ball.style.transition = 'none';
 
@@ -5977,10 +6006,15 @@ function bindFloatBallEvents(ball) {
   });
 
   ball.addEventListener('touchstart', function(e) {
-    if (e.target.closest('.fire-pill-btn')) {
+    if (e.target.closest('.fire-pill-btn') || e.target.closest('.fire-float-pill-info')) {
       return;
     }
+    if (ballHoverTimer) {
+      clearTimeout(ballHoverTimer);
+      ballHoverTimer = null;
+    }
     cancelFloatBallAutoHide(ball);
+    ball.classList.remove('is-hovered');
     ball.classList.add('dragging');
     ball.style.transition = 'none';
 
@@ -6041,7 +6075,7 @@ function bindFloatBallEvents(ball) {
   }, { passive: true });
 
   ball.addEventListener('click', function(e) {
-    if (e.target.closest('.fire-pill-btn')) {
+    if (e.target.closest('.fire-pill-btn') || e.target.closest('.fire-float-pill-info')) {
       return;
     }
     if (hasMoved) {
@@ -6052,7 +6086,7 @@ function bindFloatBallEvents(ball) {
     }
 
     // Touch / Mobile friendly: First tap unfolds control pill, second tap or expand button opens full player
-    var isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    var isTouch = (('ontouchstart' in window) || (navigator.maxTouchPoints > 0)) && (e.pointerType !== 'mouse');
     if (isTouch) {
       if (!ball.classList.contains('show-pill')) {
         e.stopPropagation();
@@ -6075,7 +6109,7 @@ function bindFloatBallEvents(ball) {
       }
     }
 
-    ball.classList.remove('show-pill');
+    ball.classList.remove('show-pill', 'is-hovered');
     minimizePlayer(false);
   });
 }
