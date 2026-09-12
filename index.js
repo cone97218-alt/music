@@ -1437,16 +1437,44 @@ async function fetchPlaylistTracks(playlistId, source) {
   // QQ Music / vkeys playlist via dissInfo
   if (source === 'vkeys_tencent' || source === 'tencent') {
     try {
-      var qqDissRes = await fetch(`https://api.vkeys.cn/v2/music/tencent/dissInfo?id=${playlistId}`);
+      var qqDissRes = await fetch(`https://api.vkeys.cn/v2/music/tencent/dissInfo?id=${playlistId}&page=1&num=60`);
       if (qqDissRes.ok) {
         var qqDissData = await qqDissRes.json();
         if (qqDissData && qqDissData.code === 200 && qqDissData.data && Array.isArray(qqDissData.data.list)) {
-          return qqDissData.data.list.map(item => ({
+          var allList = [].concat(qqDissData.data.list);
+          var totalSongs = qqDissData.data.info ? (qqDissData.data.info.songnum || 0) : 0;
+          if (totalSongs > 60) {
+            var maxPages = Math.min(Math.ceil(totalSongs / 60), 6); // fetch up to 360 songs
+            var nextPages = [];
+            for (var p = 2; p <= maxPages; p++) nextPages.push(p);
+
+            var restResults = await Promise.all(nextPages.map(function(pNum) {
+              return fetch(`https://api.vkeys.cn/v2/music/tencent/dissInfo?id=${playlistId}&page=${pNum}&num=60`)
+                .then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(d) { return (d && d.data && Array.isArray(d.data.list)) ? d.data.list : []; })
+                .catch(function() { return []; });
+            }));
+            for (var rIdx = 0; rIdx < restResults.length; rIdx++) {
+              allList = allList.concat(restResults[rIdx]);
+            }
+          }
+
+          var seenSongIds = new Set();
+          var uniqueList = [];
+          for (var uIdx = 0; uIdx < allList.length; uIdx++) {
+            var item = allList[uIdx];
+            if (item && item.id && !seenSongIds.has(String(item.id))) {
+              seenSongIds.add(String(item.id));
+              uniqueList.push(item);
+            }
+          }
+
+          return uniqueList.map(item => ({
             id: String(item.id),
             name: item.song || item.title || '未知歌曲',
-            artist: Array.isArray(item.singer_list) && item.singer_list.length > 0 
-              ? item.singer_list.map(s => s.name) 
-              : (item.singer ? [item.singer] : ['未知歌手']),
+            artist: (Array.isArray(item.singer_list) && item.singer_list.length > 0)
+              ? item.singer_list.map(s => s.name)
+              : (item.singer ? item.singer.replace(/\|+$/, '').split('|').filter(Boolean) : ['未知歌手']),
             album: item.album || '',
             pic_id: item.cover || '',
             url_id: item.id,
@@ -2743,9 +2771,8 @@ function createUI() {
               <button type="button" class="fire-search-mode-btn ${state.settings.searchMode === 'playlist' ? 'active' : ''}" id="fire-search-mode-playlist">搜歌单</button>
             </div>
             <div class="fire-playlist-source-bar" id="fire-playlist-source-bar" style="display: ${state.settings.searchMode === 'playlist' ? 'flex' : 'none'};">
-              <span class="fire-pl-source-label"><i class="fa-solid fa-layer-group"></i> 歌单源:</span>
-              <button type="button" class="fire-pl-source-btn ${state.settings.playlistSearchSource === 'vkeys_tencent' ? 'active' : ''}" id="fire-pl-source-qq" data-source="vkeys_tencent"><i class="fa-solid fa-bolt"></i> QQ音乐 (免代理)</button>
-              <button type="button" class="fire-pl-source-btn ${state.settings.playlistSearchSource === 'netease' ? 'active' : ''}" id="fire-pl-source-netease" data-source="netease"><i class="fa-solid fa-server"></i> 网易云 (电脑Web)</button>
+              <button type="button" class="fire-pl-source-btn ${state.settings.playlistSearchSource === 'vkeys_tencent' ? 'active' : ''}" id="fire-pl-source-qq" data-source="vkeys_tencent">QQ音乐</button>
+              <button type="button" class="fire-pl-source-btn ${state.settings.playlistSearchSource === 'netease' ? 'active' : ''}" id="fire-pl-source-netease" data-source="netease">网易云</button>
             </div>
             <form id="fire-search-form" class="fire-search-form" action="javascript:void(0);">
               <input type="search" id="fire-search-input" class="fire-input" enterkeyhint="search" placeholder="${state.settings.searchMode === 'playlist' ? (state.settings.playlistSearchSource === 'netease' ? '输入关键词搜索网易云歌单...' : '输入关键词搜索QQ音乐歌单...') : '输入歌名或歌手搜索...'}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
@@ -6155,14 +6182,42 @@ async function importPlaylist(inputStr) {
     // QQ Music: fetch via vkeys dissInfo
     if (source === 'tencent') {
       try {
-        var qqRes = await fetch(`https://api.vkeys.cn/v2/music/tencent/dissInfo?id=${playlistId}`);
+        var qqRes = await fetch(`https://api.vkeys.cn/v2/music/tencent/dissInfo?id=${playlistId}&page=1&num=60`);
         if (qqRes.ok) {
           var qqData = await qqRes.json();
           if (qqData && qqData.code === 200 && qqData.data && Array.isArray(qqData.data.list)) {
             if (qqData.data.info && qqData.data.info.title) {
               playlistName = qqData.data.info.title.trim();
             }
-            tracks = qqData.data.list.map(item => {
+            var allList = [].concat(qqData.data.list);
+            var totalSongs = qqData.data.info ? (qqData.data.info.songnum || 0) : 0;
+            if (totalSongs > 60) {
+              var maxPages = Math.min(Math.ceil(totalSongs / 60), 6);
+              var nextPages = [];
+              for (var p = 2; p <= maxPages; p++) nextPages.push(p);
+
+              var restResults = await Promise.all(nextPages.map(function(pNum) {
+                return fetch(`https://api.vkeys.cn/v2/music/tencent/dissInfo?id=${playlistId}&page=${pNum}&num=60`)
+                  .then(function(r) { return r.ok ? r.json() : null; })
+                  .then(function(d) { return (d && d.data && Array.isArray(d.data.list)) ? d.data.list : []; })
+                  .catch(function() { return []; });
+              }));
+              for (var rIdx = 0; rIdx < restResults.length; rIdx++) {
+                allList = allList.concat(restResults[rIdx]);
+              }
+            }
+
+            var seenSongIds = new Set();
+            var uniqueList = [];
+            for (var uIdx = 0; uIdx < allList.length; uIdx++) {
+              var item = allList[uIdx];
+              if (item && item.id && !seenSongIds.has(String(item.id))) {
+                seenSongIds.add(String(item.id));
+                uniqueList.push(item);
+              }
+            }
+
+            tracks = uniqueList.map(item => {
               var rawArtist = (Array.isArray(item.singer_list) && item.singer_list.length > 0)
                 ? item.singer_list.map(s => s.name)
                 : (item.singer ? item.singer.replace(/\|+$/, '').split('|').filter(Boolean) : ['未知歌手']);

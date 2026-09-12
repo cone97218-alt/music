@@ -2195,24 +2195,13 @@
     align-items: center;
     gap: 6px;
     margin-bottom: 6px;
-    padding: 1px 2px;
+    padding: 1px 0;
     background: transparent;
     border: none;
 }
 
-.fire-pl-source-label {
-    font-size: 11px;
-    opacity: 0.65;
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    margin-right: 2px;
-    user-select: none;
-    color: var(--fire-text, #fff);
-}
-
 .fire-pl-source-btn {
-    padding: 2px 10px;
+    padding: 3px 12px;
     font-size: 11px;
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.06);
@@ -2226,7 +2215,7 @@
     white-space: nowrap;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    justify-content: center;
 }
 
 .fire-pl-source-btn:hover {
