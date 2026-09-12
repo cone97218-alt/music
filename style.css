@@ -22,11 +22,7 @@
 }
 
 #fire-panel {
-    position: fixed !important;
-    bottom: 0 !important;
-    left: 0 !important;
-    right: 0 !important;
-    max-height: 85vh !important;
+    position: fixed;
     background: var(--fire-bg-opaque, var(--SmartThemeBlurTintColor, #080d14)) !important;
     border-radius: 12px 12px 0 0 !important;
     z-index: 100001 !important;
@@ -41,23 +37,28 @@
 
 /* ─── Display Modes ─── */
 
-/* 1. Standard Centered Modal (Default on desktop, Fullscreen on mobile) */
+/* 1. Standard Centered Modal */
 @media(min-width: 761px) {
-    #fire-panel:not(.fire-fullscreen):not(.fire-qr-top):not(.fire-qr-bottom):not(.fire-qr-left):not(.fire-qr-right) {
+    #fire-panel:not(.fire-fullscreen):not(.fire-floating):not(.fire-drawer-top):not(.fire-drawer-bottom):not(.fire-drawer-left):not(.fire-drawer-right):not(.fire-qr-top):not(.fire-qr-bottom):not(.fire-qr-left):not(.fire-qr-right),
+    #fire-panel.fire-modal {
         position: fixed !important;
         top: 50% !important;
         left: 50% !important;
         transform: translate(-50%, -50%) scale(0.95) !important;
         opacity: 0 !important;
         pointer-events: none !important;
-        width: 860px !important;
-        height: 600px !important;
+        width: var(--fire-modal-w-ratio, 860px) !important;
+        max-width: 96vw !important;
+        min-width: 360px !important;
+        height: var(--fire-modal-h-ratio, 600px) !important;
         max-height: min(1400px, calc(var(--fire-vvh, 95vh) - 24px)) !important;
+        min-height: 380px !important;
         border-radius: 16px !important;
         border: 1px solid var(--SmartThemeBorderColor, #374151) !important;
         box-shadow: 0 10px 30px var(--SmartThemeShadowColor, rgba(0, 0, 0, 0.6)) !important;
     }
-    #fire-panel:not(.fire-fullscreen):not(.fire-qr-top):not(.fire-qr-bottom):not(.fire-qr-left):not(.fire-qr-right).fire-open {
+    #fire-panel:not(.fire-fullscreen):not(.fire-floating):not(.fire-drawer-top):not(.fire-drawer-bottom):not(.fire-drawer-left):not(.fire-drawer-right):not(.fire-qr-top):not(.fire-qr-bottom):not(.fire-qr-left):not(.fire-qr-right).fire-open,
+    #fire-panel.fire-modal.fire-open {
         transform: translate(-50%, -50%) scale(1) !important;
         opacity: 1 !important;
         pointer-events: auto !important;
@@ -65,19 +66,22 @@
 }
 
 @media(max-width: 760px) {
-    #fire-panel:not(.fire-qr-top):not(.fire-qr-bottom):not(.fire-qr-left):not(.fire-qr-right) {
+    #fire-panel:not(.fire-fullscreen):not(.fire-floating):not(.fire-drawer-top):not(.fire-drawer-bottom):not(.fire-drawer-left):not(.fire-drawer-right):not(.fire-qr-top):not(.fire-qr-bottom):not(.fire-qr-left):not(.fire-qr-right),
+    #fire-panel.fire-modal {
         display: flex !important;
         width: 100vw !important;
         height: 100vh !important;
         max-height: none !important;
         border-radius: 0 !important;
         top: 0 !important;
+        left: 0 !important;
         border-top: 1px solid var(--SmartThemeBorderColor, #374151) !important;
         transform: translateY(100%) !important;
         opacity: 0 !important;
         pointer-events: none !important;
     }
-    #fire-panel:not(.fire-qr-top):not(.fire-qr-bottom):not(.fire-qr-left):not(.fire-qr-right).fire-open {
+    #fire-panel:not(.fire-fullscreen):not(.fire-floating):not(.fire-drawer-top):not(.fire-drawer-bottom):not(.fire-drawer-left):not(.fire-drawer-right):not(.fire-qr-top):not(.fire-qr-bottom):not(.fire-qr-left):not(.fire-qr-right).fire-open,
+    #fire-panel.fire-modal.fire-open {
         display: flex !important;
         transform: translateY(0) !important;
         opacity: 1 !important;
@@ -110,6 +114,7 @@
 /* 3. Slide-out Drawers (Top, Bottom, Left, Right) */
 
 /* Top Drawer */
+#fire-panel.fire-drawer-top,
 #fire-panel.fire-qr-top {
     position: fixed !important;
     top: 0 !important;
@@ -120,34 +125,40 @@
     opacity: 0 !important;
     pointer-events: none !important;
     width: min(860px, 95vw) !important;
-    height: 70vh !important;
-    max-height: 70vh !important;
+    height: var(--fire-drawer-ratio, 70vh) !important;
+    max-height: var(--fire-drawer-ratio, 70vh) !important;
     border-radius: 0 0 12px 12px !important;
     border: 1px solid var(--SmartThemeBorderColor, #374151) !important;
     border-top: none !important;
     box-shadow: 0 10px 30px var(--SmartThemeShadowColor, rgba(0, 0, 0, 0.6)) !important;
 }
+#fire-panel.fire-drawer-top.fire-open,
 #fire-panel.fire-qr-top.fire-open {
     transform: translate(-50%, 0) !important;
     opacity: 1 !important;
     pointer-events: auto !important;
 }
 @media(max-width: 760px) {
+    #fire-panel.fire-drawer-top,
     #fire-panel.fire-qr-top {
         width: 100vw !important;
         left: 0 !important;
         right: 0 !important;
+        height: var(--fire-drawer-ratio, 70vh) !important;
+        max-height: var(--fire-drawer-ratio, 70vh) !important;
         transform: translateY(-100%) !important;
     }
+    #fire-panel.fire-drawer-top.fire-open,
     #fire-panel.fire-qr-top.fire-open {
         transform: translateY(0) !important;
     }
 }
 
 /* Bottom Drawer */
+#fire-panel.fire-drawer-bottom,
 #fire-panel.fire-qr-bottom {
     position: fixed !important;
-    top: 30vh !important;
+    top: calc(100vh - var(--fire-drawer-ratio, 70vh)) !important;
     bottom: auto !important;
     left: 50% !important;
     right: auto !important;
@@ -155,35 +166,39 @@
     opacity: 0 !important;
     pointer-events: none !important;
     width: min(860px, 95vw) !important;
-    height: 70vh !important;
-    max-height: 70vh !important;
+    height: var(--fire-drawer-ratio, 70vh) !important;
+    max-height: var(--fire-drawer-ratio, 70vh) !important;
     border-radius: 12px 12px 0 0 !important;
     border: 1px solid var(--SmartThemeBorderColor, #374151) !important;
     border-bottom: none !important;
     box-shadow: 0 -10px 30px var(--SmartThemeShadowColor, rgba(0, 0, 0, 0.6)) !important;
 }
+#fire-panel.fire-drawer-bottom.fire-open,
 #fire-panel.fire-qr-bottom.fire-open {
     transform: translate(-50%, 0) !important;
     opacity: 1 !important;
     pointer-events: auto !important;
 }
 @media(max-width: 760px) {
+    #fire-panel.fire-drawer-bottom,
     #fire-panel.fire-qr-bottom {
         width: 100vw !important;
         left: 0 !important;
         right: 0 !important;
-        top: 30vh !important;
-        height: 70vh !important;
-        max-height: 70vh !important;
+        top: calc(100vh - var(--fire-drawer-ratio, 70vh)) !important;
+        height: var(--fire-drawer-ratio, 70vh) !important;
+        max-height: var(--fire-drawer-ratio, 70vh) !important;
         border-radius: 12px 12px 0 0 !important;
         transform: translateY(100%) !important;
     }
+    #fire-panel.fire-drawer-bottom.fire-open,
     #fire-panel.fire-qr-bottom.fire-open {
         transform: translateY(0) !important;
     }
 }
 
 /* Left Drawer */
+#fire-panel.fire-drawer-left,
 #fire-panel.fire-qr-left {
     position: fixed !important;
     top: 0 !important;
@@ -193,7 +208,8 @@
     transform: translateX(-100%) !important;
     opacity: 0 !important;
     pointer-events: none !important;
-    width: min(600px, 45%) !important;
+    width: var(--fire-drawer-ratio, 45vw) !important;
+    max-width: 95vw !important;
     height: 100vh !important;
     max-height: 100vh !important;
     border-radius: 0 12px 12px 0 !important;
@@ -201,18 +217,22 @@
     border-left: none !important;
     box-shadow: 10px 0 30px var(--SmartThemeShadowColor, rgba(0, 0, 0, 0.6)) !important;
 }
+#fire-panel.fire-drawer-left.fire-open,
 #fire-panel.fire-qr-left.fire-open {
     transform: translateX(0) !important;
     opacity: 1 !important;
     pointer-events: auto !important;
 }
 @media(max-width: 760px) {
+    #fire-panel.fire-drawer-left,
     #fire-panel.fire-qr-left {
-        width: 85vw !important;
+        width: var(--fire-drawer-ratio, 85vw) !important;
+        max-width: 95vw !important;
     }
 }
 
 /* Right Drawer */
+#fire-panel.fire-drawer-right,
 #fire-panel.fire-qr-right {
     position: fixed !important;
     top: 0 !important;
@@ -222,7 +242,8 @@
     transform: translateX(100%) !important;
     opacity: 0 !important;
     pointer-events: none !important;
-    width: min(600px, 45%) !important;
+    width: var(--fire-drawer-ratio, 45vw) !important;
+    max-width: 95vw !important;
     height: 100vh !important;
     max-height: 100vh !important;
     border-radius: 12px 0 0 12px !important;
@@ -230,14 +251,17 @@
     border-right: none !important;
     box-shadow: -10px 0 30px var(--SmartThemeShadowColor, rgba(0, 0, 0, 0.6)) !important;
 }
+#fire-panel.fire-drawer-right.fire-open,
 #fire-panel.fire-qr-right.fire-open {
     transform: translateX(0) !important;
     opacity: 1 !important;
     pointer-events: auto !important;
 }
 @media(max-width: 760px) {
+    #fire-panel.fire-drawer-right,
     #fire-panel.fire-qr-right {
-        width: 85vw !important;
+        width: var(--fire-drawer-ratio, 85vw) !important;
+        max-width: 95vw !important;
     }
 }
 
@@ -247,17 +271,318 @@
 }
 
 /* Layout adaptation for Left/Right thin drawer styles */
+#fire-panel.fire-drawer-left #fire-panel-body,
+#fire-panel.fire-drawer-right #fire-panel-body,
 #fire-panel.fire-qr-left #fire-panel-body,
 #fire-panel.fire-qr-right #fire-panel-body {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
     overflow-y: auto;
 }
+#fire-panel.fire-drawer-left .fire-player-column,
+#fire-panel.fire-drawer-right .fire-player-column,
 #fire-panel.fire-qr-left .fire-player-column,
 #fire-panel.fire-qr-right .fire-player-column {
     border-right: none;
     border-bottom: 1px solid var(--fire-border);
     padding-bottom: 16px;
+}
+
+/* 4. Floating Window (Draggable, Resizable, Non-modal) */
+#fire-panel.fire-floating {
+    position: fixed !important;
+    right: auto !important;
+    bottom: auto !important;
+    margin: 0 !important;
+    min-width: 360px !important;
+    min-height: 420px !important;
+    max-width: 98vw !important;
+    max-height: 98vh !important;
+    border-radius: 14px !important;
+    border: 1px solid var(--SmartThemeBorderColor, #374151) !important;
+    box-shadow: 0 12px 36px var(--SmartThemeShadowColor, rgba(0, 0, 0, 0.65)) !important;
+    z-index: 100005 !important;
+    transform: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transition: opacity 0.2s ease, box-shadow 0.2s ease !important;
+}
+#fire-panel.fire-floating.fire-open {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+}
+#fire-panel.fire-floating #fire-header {
+    cursor: move !important;
+    user-select: none !important;
+}
+#fire-overlay.fire-floating-overlay {
+    pointer-events: none !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+
+/* Resize Handle */
+.fire-resize-handle {
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    width: 18px;
+    height: 18px;
+    cursor: nwse-resize;
+    z-index: 10;
+    display: none;
+    opacity: 0.5;
+    transition: opacity 0.2s;
+    touch-action: none;
+}
+.fire-resize-handle:hover {
+    opacity: 1;
+}
+.fire-resize-handle::after {
+    content: '';
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--fire-accent, #a855f7);
+    border-bottom: 2px solid var(--fire-accent, #a855f7);
+}
+#fire-panel.fire-floating .fire-resize-handle {
+    display: block;
+}
+
+/* ─── Simplified Floating Ball (跟随酒馆主题 & 贴边自动隐藏) ──────────── */
+
+@keyframes fire-ball-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.fire-float-ball {
+    position: fixed;
+    width: 46px;
+    height: 46px;
+    z-index: 100006;
+    user-select: none;
+    touch-action: none;
+    cursor: pointer;
+    transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* 贴边半隐藏状态 (Docked & Auto-hidden into screen edge) */
+.fire-float-ball.docked-left {
+    transform: translateX(-55%);
+    opacity: 0.45;
+}
+
+.fire-float-ball.docked-right {
+    transform: translateX(55%);
+    opacity: 0.45;
+}
+
+/* 鼠标悬停、触摸或拖拽时立即弹回完整显示 */
+.fire-float-ball:hover,
+.fire-float-ball:focus-within,
+.fire-float-ball.dragging,
+.fire-float-ball.docked-left:hover,
+.fire-float-ball.docked-right:hover {
+    transform: translateX(0) scale(1.05);
+    opacity: 1;
+}
+
+.fire-float-ball:active {
+    transform: translateX(0) scale(0.95);
+}
+
+/* 球体本体：完全顺应酒馆主题配色 */
+.fire-float-ball-inner {
+    position: relative;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: var(--fire-bg-opaque, var(--SmartThemeBlurTintColor, #1e1e24));
+    border: 2px solid var(--fire-accent, #a855f7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    box-sizing: border-box;
+    transition: border-color 0.2s;
+}
+
+/* 封面旋转 */
+.fire-float-ball-inner img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 50%;
+    display: block;
+}
+
+.fire-float-ball.playing .fire-float-ball-inner img {
+    animation: fire-ball-spin 16s linear infinite;
+}
+
+.fire-float-ball:not(.playing) .fire-float-ball-inner img {
+    animation: fire-ball-spin 16s linear infinite;
+    animation-play-state: paused;
+}
+
+/* 唱片黑胶中心微孔（Mini Vinyl Hub Dot） */
+.fire-float-center-dot {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--fire-bg-opaque, var(--SmartThemeBlurTintColor, #1e1e24));
+    border: 1.5px solid var(--fire-accent, #a855f7);
+    pointer-events: none;
+    z-index: 2;
+}
+
+/* 无封面时居中精致音乐图标 */
+.fire-float-ball-icon {
+    font-size: 18px;
+    color: var(--fire-accent, #a855f7);
+    transition: transform 0.2s;
+    z-index: 1;
+}
+
+/* 无封面且播放中时居中跳动律动音浪（3-Bar Equalizer） */
+.fire-float-wave {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2.5px;
+    height: 18px;
+    z-index: 1;
+}
+
+.fire-float-wave span {
+    display: block;
+    width: 2.5px;
+    height: 14px;
+    background: var(--fire-accent, #a855f7);
+    border-radius: 2px;
+}
+
+.fire-float-ball.playing .fire-float-wave span:nth-child(1) {
+    animation: fire-bar-bounce 0.8s ease-in-out infinite alternate;
+}
+
+.fire-float-ball.playing .fire-float-wave span:nth-child(2) {
+    animation: fire-bar-bounce 0.6s ease-in-out 0.2s infinite alternate;
+}
+
+.fire-float-ball.playing .fire-float-wave span:nth-child(3) {
+    animation: fire-bar-bounce 0.9s ease-in-out 0.4s infinite alternate;
+}
+
+@keyframes fire-bar-bounce {
+    0% { height: 4px; }
+    100% { height: 16px; }
+}
+
+/* 悬停信息胶囊（Pill）- 顺应酒馆主题 */
+.fire-float-pill {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%) scale(0.95);
+    height: 40px;
+    background: var(--fire-bg-opaque, var(--SmartThemeBlurTintColor, #1e1e24));
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--fire-border, rgba(128, 128, 128, 0.2));
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 10;
+}
+
+.fire-float-pill.pill-left {
+    right: calc(100% + 8px);
+    left: auto;
+}
+
+.fire-float-pill.pill-right {
+    left: calc(100% + 8px);
+    right: auto;
+}
+
+.fire-float-ball:hover .fire-float-pill,
+.fire-float-ball.show-pill .fire-float-pill {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(-50%) scale(1);
+}
+
+.fire-float-pill-info {
+    display: flex;
+    flex-direction: column;
+    max-width: 130px;
+    overflow: hidden;
+}
+
+.fire-float-pill-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--fire-text, var(--SmartThemeBodyColor, #f3f4f6));
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.fire-float-pill-artist {
+    font-size: 9px;
+    color: var(--fire-em, var(--fire-text));
+    opacity: 0.75;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.fire-float-pill-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border-left: 1px solid var(--fire-border, rgba(128, 128, 128, 0.15));
+    padding-left: 6px;
+}
+
+.fire-pill-btn {
+    background: transparent;
+    border: none;
+    color: var(--fire-text, var(--SmartThemeBodyColor, #f3f4f6));
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    transition: background 0.15s ease, transform 0.15s ease, color 0.15s ease;
+}
+
+.fire-pill-btn:hover {
+    background: rgba(128, 128, 128, 0.15);
+    transform: scale(1.1);
+    color: var(--fire-accent, #a855f7);
+}
+
+.fire-pill-btn:active {
+    transform: scale(0.92);
 }
 
 /* ─── Status Bar Avoidance (Mobile & Fullscreen) ─── */
@@ -269,11 +594,13 @@
         --fire-status-bar-inset: max(env(safe-area-inset-top, 0px), 25px);
     }
 }
-#fire-panel.fire-status-bar-avoid.fire-qr-bottom {
+#fire-panel.fire-status-bar-avoid.fire-drawer-bottom,
+#fire-panel.fire-status-bar-avoid.fire-qr-bottom,
+#fire-panel.fire-status-bar-avoid.fire-floating {
     --fire-status-bar-inset: 0px !important;
 }
 @media (min-width: 761px) {
-    #fire-panel.fire-status-bar-avoid:not(.fire-fullscreen):not(.fire-qr-top):not(.fire-qr-left):not(.fire-qr-right) {
+    #fire-panel.fire-status-bar-avoid:not(.fire-fullscreen):not(.fire-drawer-top):not(.fire-drawer-left):not(.fire-drawer-right):not(.fire-qr-top):not(.fire-qr-left):not(.fire-qr-right) {
         --fire-status-bar-inset: 0px !important;
     }
 }
@@ -632,6 +959,30 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
+.fire-btn-like {
+    background: none;
+    border: none;
+    padding: 2px 4px;
+    font-size: 14px;
+    color: var(--fire-text, #f3f4f6);
+    cursor: pointer;
+    opacity: 0.75;
+    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.2s, color 0.2s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.fire-btn-like:hover {
+    opacity: 1;
+    transform: scale(1.2);
+}
+.fire-btn-like:active {
+    transform: scale(0.9);
+}
+.fire-btn-like .fa-solid.fa-heart {
+    color: #ef4444 !important;
+    filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.45));
+}
 
 /* Progress Seek Bar */
 .fire-progress-container {
@@ -989,6 +1340,20 @@
 }
 .fire-music-item-btn.remove:hover {
     color: #ff4d4d;
+}
+.fire-music-item-btn.like-btn {
+    opacity: 0.45;
+    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.2s, color 0.2s;
+}
+.fire-music-item-btn.like-btn:hover {
+    opacity: 1;
+    transform: scale(1.15);
+}
+.fire-music-item-btn.like-btn.liked,
+.fire-music-item-btn.like-btn .fa-solid.fa-heart {
+    color: #ef4444 !important;
+    opacity: 0.95;
+    filter: drop-shadow(0 0 2px rgba(239, 68, 68, 0.35));
 }
 
 /* Playlist Tab Controls */
@@ -1530,8 +1895,8 @@
     display: flex;
     align-items: flex-start;
     gap: 10px;
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid var(--fire-border, rgba(255,255,255,0.08));
+    background: transparent;
+    border: 1px solid var(--fire-border, rgba(128, 128, 128, 0.15));
     border-radius: 8px;
     padding: 10px;
     position: relative;
@@ -1539,8 +1904,8 @@
 }
 
 .fire-chart-card:hover {
-    background: rgba(0, 0, 0, 0.35);
-    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(128, 128, 128, 0.06);
+    border-color: var(--fire-accent, #a855f7);
 }
 
 .fire-chart-card-cover-wrap {
@@ -1754,5 +2119,435 @@
     color: #ffffff;
     font-weight: bold;
 }
+
+/* ─── Search Mode Selector (Song vs Playlist) ────────────────────────────── */
+
+.fire-search-mode-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 6px;
+    background: rgba(128, 128, 128, 0.08);
+    padding: 3px;
+    border-radius: 8px;
+    border: 1px solid var(--fire-border, rgba(128, 128, 128, 0.15));
+}
+
+.fire-search-mode-btn {
+    flex: 1;
+    padding: 4px 10px;
+    font-size: 11px;
+    border-radius: 6px;
+    background: transparent;
+    border: none;
+    color: var(--fire-text, #fff);
+    opacity: 0.7;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.15s, opacity 0.15s, color 0.15s;
+    user-select: none;
+}
+
+.fire-search-mode-btn:hover {
+    opacity: 0.95;
+    background: rgba(128, 128, 128, 0.12);
+}
+
+.fire-search-mode-btn.active {
+    background: var(--fire-accent, #a855f7);
+    color: #ffffff;
+    opacity: 1;
+    font-weight: bold;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+/* ─── Playlist Card Styles ─────────────────────────────────────────────────── */
+
+.fire-playlist-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 4px 0;
+}
+
+.fire-playlist-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: transparent;
+    border: 1px solid var(--fire-border, rgba(128, 128, 128, 0.12));
+    border-radius: 8px;
+    padding: 8px 10px;
+    transition: background 0.2s, border-color 0.2s, transform 0.15s;
+    cursor: pointer;
+    position: relative;
+}
+
+.fire-playlist-card:hover {
+    background: rgba(128, 128, 128, 0.06);
+    border-color: var(--fire-accent, #a855f7);
+}
+
+.fire-playlist-card-cover-wrap {
+    width: 52px;
+    height: 52px;
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+    flex-shrink: 0;
+    background: rgba(128, 128, 128, 0.1);
+    border: 1px solid var(--fire-border, rgba(128, 128, 128, 0.12));
+}
+
+.fire-playlist-card-cover {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.fire-playlist-card-badge {
+    position: absolute;
+    top: 2px;
+    right: 3px;
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    color: #fff;
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    line-height: 1.1;
+}
+
+.fire-playlist-card-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.fire-playlist-card-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fire-text, #fff);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.3;
+}
+
+.fire-playlist-card-creator {
+    font-size: 11px;
+    color: var(--fire-em, var(--fire-text));
+    opacity: 0.7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.fire-playlist-card-meta {
+    font-size: 10px;
+    color: var(--fire-em, var(--fire-text));
+    opacity: 0.55;
+    margin-top: 1px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.fire-playlist-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+/* Pure Icon Action Buttons for Playlist Cards */
+.fire-playlist-act-btn {
+    background: transparent;
+    border: 1px solid var(--fire-border, rgba(128, 128, 128, 0.18));
+    color: var(--fire-text, #fff);
+    opacity: 0.75;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.fire-playlist-act-btn:hover {
+    opacity: 1;
+    color: var(--fire-accent, #a855f7);
+    border-color: var(--fire-accent, #a855f7);
+    background: rgba(128, 128, 128, 0.12);
+    transform: translateY(-1px);
+}
+
+.fire-playlist-act-btn.fire-pl-act-import:hover {
+    color: #f59e0b;
+    border-color: #f59e0b;
+}
+
+/* ─── Discover Subtabs & Category Chips ────────────────────────────────────── */
+
+.fire-discover-subtabs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(128, 128, 128, 0.08);
+    padding: 3px;
+    border-radius: 8px;
+    border: 1px solid var(--fire-border, rgba(128, 128, 128, 0.15));
+    margin-bottom: 8px;
+}
+
+.fire-discover-subtab-btn {
+    flex: 1;
+    padding: 4px 12px;
+    font-size: 12px;
+    border-radius: 6px;
+    background: transparent;
+    border: none;
+    color: var(--fire-text, #fff);
+    opacity: 0.7;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.15s, opacity 0.15s, color 0.15s;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.fire-discover-subtab-btn:hover {
+    opacity: 0.95;
+    background: rgba(128, 128, 128, 0.12);
+}
+
+.fire-discover-subtab-btn.active {
+    background: var(--fire-accent, #a855f7);
+    color: #ffffff;
+    opacity: 1;
+    font-weight: bold;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.fire-discover-cat-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 2px 8px 2px;
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: none;
+}
+
+.fire-discover-cat-bar::-webkit-scrollbar {
+    display: none;
+}
+
+.fire-discover-cat-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    background: transparent;
+    border: 1px solid var(--fire-border, rgba(128, 128, 128, 0.2));
+    color: var(--fire-text, #fff);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.2s, border-color 0.2s, color 0.2s;
+    flex-shrink: 0;
+}
+
+.fire-discover-cat-chip:hover {
+    background: rgba(128, 128, 128, 0.1);
+    border-color: var(--fire-accent, #a855f7);
+}
+
+.fire-discover-cat-chip.active {
+    background: var(--fire-accent, #a855f7);
+    border-color: var(--fire-accent, #a855f7);
+    color: #ffffff;
+    font-weight: bold;
+}
+
+/* ─── Playlist Tracklist Preview Modal / Drawer ────────────────────────────── */
+
+.fire-preview-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: var(--fire-bg-opaque, var(--SmartThemeBlurTintColor, #111827));
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    animation: fire-fade-in 0.18s ease-out;
+    border-radius: inherit;
+    color: var(--fire-text, var(--SmartThemeBodyColor, #f3f4f6));
+}
+
+.fire-preview-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--fire-border, rgba(128, 128, 128, 0.15));
+    background: transparent;
+}
+
+.fire-preview-modal-header-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+}
+
+.fire-preview-modal-cover {
+    width: 44px;
+    height: 44px;
+    border-radius: 6px;
+    object-fit: cover;
+    flex-shrink: 0;
+    background: rgba(128, 128, 128, 0.1);
+    border: 1px solid var(--fire-border, rgba(128, 128, 128, 0.15));
+}
+
+.fire-preview-modal-title {
+    font-size: 13px;
+    font-weight: bold;
+    color: var(--fire-text, var(--SmartThemeBodyColor, #f3f4f6));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fire-preview-modal-subtitle {
+    font-size: 11px;
+    color: var(--fire-em, var(--fire-text));
+    opacity: 0.75;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-top: 2px;
+}
+
+.fire-preview-modal-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: rgba(128, 128, 128, 0.05);
+    border-bottom: 1px solid var(--fire-border, rgba(128, 128, 128, 0.12));
+    flex-wrap: wrap;
+}
+
+.fire-preview-modal-actions .fire-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+    height: 28px;
+    border-radius: 6px;
+}
+
+.fire-preview-modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 10px;
+    background: transparent;
+}
+
+.fire-preview-song-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 8px;
+    border-radius: 6px;
+    transition: background 0.15s;
+    font-size: 12px;
+    color: var(--fire-text, var(--SmartThemeBodyColor, #f3f4f6));
+    cursor: pointer;
+}
+
+.fire-preview-song-row:hover {
+    background: rgba(128, 128, 128, 0.08);
+}
+
+.fire-preview-song-idx {
+    width: 22px;
+    text-align: center;
+    color: var(--fire-em, var(--fire-text));
+    opacity: 0.55;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+
+.fire-preview-song-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.fire-preview-song-name {
+    font-weight: 500;
+    color: var(--fire-text, var(--SmartThemeBodyColor, #f3f4f6));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fire-preview-song-artist {
+    font-size: 11px;
+    color: var(--fire-em, var(--fire-text));
+    opacity: 0.7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-top: 1px;
+}
+
+.fire-preview-song-btns {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.fire-preview-song-btns button {
+    background: transparent;
+    border: none;
+    color: var(--fire-text, var(--SmartThemeBodyColor, #f3f4f6));
+    opacity: 0.55;
+    cursor: pointer;
+    font-size: 12px;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.fire-preview-song-btns button:hover {
+    opacity: 1;
+    color: var(--fire-accent, #a855f7);
+    background: rgba(128, 128, 128, 0.12);
+}
+
 
 

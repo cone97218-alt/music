@@ -1,4 +1,4 @@
-import { eventSource, event_types } from '../../../../script.js';
+import { eventSource, event_types, getRequestHeaders } from '../../../../script.js';
 import { getContext } from '../../../extensions.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
@@ -24,6 +24,7 @@ import {
 // ─── Playback & App State ──────────────────────────────────────────────────────
 var state = {
   playlists: {
+    "我喜欢的": [],
     "默认歌单": []
   },
   currentPlaylist: "默认歌单",
@@ -33,7 +34,20 @@ var state = {
   volume: 0.5,
   activeQueue: [],
   settings: {
-    displayMode: 'wand-modal',
+    entryWand: true,
+    entryQR: false,
+    entrySlash: true,
+    displayMode: 'modal',
+    drawerRatio: 70,
+    modalWidthRatio: 80,
+    modalHeightRatio: 70,
+    floatingLeft: '',
+    floatingTop: '',
+    floatingWidth: 700,
+    floatingHeight: 520,
+    isMinimized: false,
+    floatingBallLeft: '',
+    floatingBallTop: '',
     statusBarAvoidance: true,
     audioQuality: '999',
     desktopLyricsEnabled: false,
@@ -65,6 +79,11 @@ var state = {
     showErrorToasts: false,
     localPlaybackEnabled: false,
     enabledDiscoverCharts: [19723756, 3779629, 3778678, 2884035, 2250011882, 5453912201, 71385702, 71384707, 10520166, 60198, 60131, 2809577409],
+    enableChartsTab: true,
+    enableDiscoverTab: true,
+    searchMode: 'song',
+    discoverSubtab: 'recommend',
+    discoverCategory: '全部',
     enableSimiSongs: true,
     storySearch: {
       enabled:        false,
@@ -173,10 +192,16 @@ var qrBtnObserver = null;
 var isInjectionPending = false;
 var injectionRetryCount = 0;
 var currentSearchSongs = [];
+var currentSearchPlaylists = [];
+var currentSearchPlaylistPage = 1;
+var currentPlaylistPreviewTracks = [];
+var currentPreviewPlaylistInfo = null;
+var _recommendCache = {};
+var DISCOVER_CATEGORIES = ['全部', '流行', 'ACG', '古风', '治愈', '轻音乐', '电子', '摇滚', '欧美', '粤语'];
 var lastSearchQueryState = null;
 var currentSearchPage = 1;
 var currentSearchQuery = '';
-var activeTab = 'search'; // 'search', 'playlists'
+var activeTab = 'search'; // 'search', 'playlists', 'discover'
 var lastActiveLineIdx = -1;
 var lyricsList = [];
 var lastToggleTime = 0;
@@ -249,6 +274,9 @@ function loadState() {
     if (savedPlaylists) {
       state.playlists = JSON.parse(savedPlaylists);
     }
+    if (!state.playlists["我喜欢的"] || !Array.isArray(state.playlists["我喜欢的"])) {
+      state.playlists["我喜欢的"] = [];
+    }
     
     var savedCurrentPlaylist = localStorage.getItem('fire_current_playlist');
     if (savedCurrentPlaylist && (savedCurrentPlaylist === "__active_queue__" || state.playlists[savedCurrentPlaylist])) {
@@ -271,6 +299,62 @@ function loadState() {
       if (state.settings.statusBarAvoidance === undefined) {
         state.settings.statusBarAvoidance = true;
       }
+      if (state.settings.enableChartsTab === undefined) {
+        state.settings.enableChartsTab = true;
+      }
+      if (state.settings.enableDiscoverTab === undefined) {
+        state.settings.enableDiscoverTab = true;
+      }
+      if (!state.settings.searchMode) {
+        state.settings.searchMode = 'song';
+      }
+      if (!state.settings.discoverSubtab) {
+        state.settings.discoverSubtab = 'recommend';
+      }
+      if (!state.settings.discoverCategory) {
+        state.settings.discoverCategory = '全部';
+      }
+      // Migrate old combined displayMode (e.g. wand-modal, qr-top, etc.)
+      var oldMode = state.settings.displayMode;
+      if (oldMode) {
+        if (oldMode === 'wand-modal') {
+          if (state.settings.entryWand === undefined) state.settings.entryWand = true;
+          if (state.settings.entryQR === undefined) state.settings.entryQR = false;
+          state.settings.displayMode = 'modal';
+        } else if (oldMode === 'wand-fullscreen') {
+          if (state.settings.entryWand === undefined) state.settings.entryWand = true;
+          if (state.settings.entryQR === undefined) state.settings.entryQR = false;
+          state.settings.displayMode = 'fullscreen';
+        } else if (oldMode === 'qr-bar') {
+          if (state.settings.entryWand === undefined) state.settings.entryWand = false;
+          if (state.settings.entryQR === undefined) state.settings.entryQR = true;
+          state.settings.displayMode = 'modal';
+        } else if (oldMode === 'qr-top') {
+          if (state.settings.entryWand === undefined) state.settings.entryWand = false;
+          if (state.settings.entryQR === undefined) state.settings.entryQR = true;
+          state.settings.displayMode = 'drawer-top';
+        } else if (oldMode === 'qr-bottom') {
+          if (state.settings.entryWand === undefined) state.settings.entryWand = false;
+          if (state.settings.entryQR === undefined) state.settings.entryQR = true;
+          state.settings.displayMode = 'drawer-bottom';
+        } else if (oldMode === 'qr-left') {
+          if (state.settings.entryWand === undefined) state.settings.entryWand = false;
+          if (state.settings.entryQR === undefined) state.settings.entryQR = true;
+          state.settings.displayMode = 'drawer-left';
+        } else if (oldMode === 'qr-right') {
+          if (state.settings.entryWand === undefined) state.settings.entryWand = false;
+          if (state.settings.entryQR === undefined) state.settings.entryQR = true;
+          state.settings.displayMode = 'drawer-right';
+        }
+      }
+      if (state.settings.entryWand === undefined) state.settings.entryWand = true;
+      if (state.settings.entryQR === undefined) state.settings.entryQR = false;
+      if (state.settings.entrySlash === undefined) state.settings.entrySlash = true;
+      if (!state.settings.drawerRatio) state.settings.drawerRatio = 70;
+      if (!state.settings.modalWidthRatio) state.settings.modalWidthRatio = 80;
+      if (!state.settings.modalHeightRatio) state.settings.modalHeightRatio = 70;
+      if (!state.settings.floatingWidth) state.settings.floatingWidth = 700;
+      if (!state.settings.floatingHeight) state.settings.floatingHeight = 520;
     }
 
     var savedQueue = localStorage.getItem('fire_active_queue');
@@ -350,6 +434,74 @@ function updateDynamicThemeColors() {
   } catch (e) {
     console.warn('[FIRE] updateDynamicThemeColors error:', e);
   }
+}
+
+// ─── Favorites (我喜欢的) Helpers ──────────────────────────────────────────────
+function isSongLiked(song) {
+  if (!song || !state.playlists["我喜欢的"]) return false;
+  return state.playlists["我喜欢的"].some(s => String(s.id) === String(song.id));
+}
+
+function toggleLikeSong(song) {
+  if (!song) return;
+  if (!state.playlists["我喜欢的"] || !Array.isArray(state.playlists["我喜欢的"])) {
+    state.playlists["我喜欢的"] = [];
+  }
+  var list = state.playlists["我喜欢的"];
+  var idx = list.findIndex(s => String(s.id) === String(song.id));
+  if (idx !== -1) {
+    list.splice(idx, 1);
+    saveState();
+    updateLikeUI();
+    showToast(`已从“我喜欢的”移除: ${song.name}`);
+  } else {
+    list.unshift(song);
+    saveState();
+    updateLikeUI();
+    showToast(`已添加到“我喜欢的”: ${song.name}`);
+  }
+  if (state.currentPlaylist === "我喜欢的") {
+    renderPlaylistSongs();
+  }
+}
+
+function updateLikeUI() {
+  var doc = getDoc();
+  if (!doc) return;
+
+  // 1. Update main player heart button
+  var mainLikeBtn = doc.getElementById('fire-btn-like');
+  if (mainLikeBtn) {
+    if (state.currentSong) {
+      mainLikeBtn.style.display = 'inline-flex';
+      var liked = isSongLiked(state.currentSong);
+      mainLikeBtn.innerHTML = liked
+        ? '<i class="fa-solid fa-heart" style="color: #ef4444;"></i>'
+        : '<i class="fa-regular fa-heart"></i>';
+      mainLikeBtn.title = liked ? "从“我喜欢的”移除" : "添加到“我喜欢的”";
+    } else {
+      mainLikeBtn.style.display = 'none';
+    }
+  }
+
+  // 2. Update playlist options count
+  renderPlaylistOptions();
+
+  // 3. Update all item like-btn in DOM
+  doc.querySelectorAll('.fire-music-item-btn.like-btn').forEach(btn => {
+    var sid = btn.getAttribute('data-song-id');
+    if (!sid) return;
+    var itemLiked = (state.playlists["我喜欢的"] || []).some(s => String(s.id) === String(sid));
+    btn.innerHTML = itemLiked
+      ? '<i class="fa-solid fa-heart" style="color: #ef4444;"></i>'
+      : '<i class="fa-regular fa-heart"></i>';
+    btn.title = itemLiked ? "从“我喜欢的”移除" : "添加到“我喜欢的”";
+    if (itemLiked) {
+      btn.classList.add('liked');
+    } else {
+      btn.classList.remove('liked');
+    }
+  });
 }
 
 // ─── Playback Offset Utils ───────────────────────────────────────────────────
@@ -917,8 +1069,524 @@ async function fetchWithRetry(url, options = {}, retries = 3, delay = 500) {
   }
 }
 
+// ─── Utility Helpers for Playlist Search & Preview ────────────────────────────
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function formatPlayCount(count) {
+  if (!count || isNaN(count)) return '';
+  count = Number(count);
+  if (count >= 100000000) {
+    return (count / 100000000).toFixed(1) + '亿';
+  } else if (count >= 10000) {
+    return (count / 10000).toFixed(1) + '万';
+  }
+  return String(count);
+}
+
+async function neteaseFetch(url) {
+  // 1. Primary: SillyTavern internal backend proxy /api/search/visit
+  try {
+    var headers = (typeof getRequestHeaders === 'function') ? getRequestHeaders() : { 'Content-Type': 'application/json' };
+    var res = await fetch('/api/search/visit', {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({ url: url, html: false })
+    });
+    if (res.ok) {
+      var data = await res.json();
+      if (data) return data;
+    }
+  } catch (e) {
+    console.warn('[FIRE] ST proxy visit failed, trying fallback...', e);
+  }
+
+  // 2. Direct fetch (if environment allows or same-origin)
+  try {
+    var directRes = await fetch(url);
+    if (directRes.ok) {
+      return await directRes.json();
+    }
+  } catch (e2) {
+    // direct fetch failed
+  }
+
+  // 3. Fallback: Public CORS proxy
+  try {
+    var proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url);
+    var pRes = await fetch(proxyUrl, { signal: AbortSignal.timeout(6000) });
+    if (pRes.ok) {
+      return await pRes.json();
+    }
+  } catch (e3) {
+    console.warn('[FIRE] AllOrigins proxy fallback failed:', e3);
+  }
+
+  return null;
+}
+
+function normalizePlaylistTracks(tracks) {
+  if (!Array.isArray(tracks)) return [];
+  return tracks.map(t => {
+    var artistArr = [];
+    if (Array.isArray(t.ar)) {
+      artistArr = t.ar.map(a => a.name);
+    } else if (Array.isArray(t.artist)) {
+      artistArr = t.artist;
+    } else if (typeof t.artist === 'string' && t.artist) {
+      artistArr = t.artist.split('/').map(s => s.trim());
+    } else {
+      artistArr = ['未知歌手'];
+    }
+
+    var cover = '';
+    if (t.al && t.al.picUrl) {
+      cover = t.al.picUrl;
+    } else if (t.pic) {
+      cover = t.pic;
+    } else if (t.cover) {
+      cover = t.cover;
+    }
+
+    var albumName = '';
+    if (t.al && t.al.name) {
+      albumName = t.al.name;
+    } else if (t.album) {
+      albumName = typeof t.album === 'object' ? (t.album.name || '') : t.album;
+    }
+
+    var picId = '';
+    if (t.al && (t.al.pic_str || t.al.pic)) {
+      picId = t.al.pic_str || String(t.al.pic);
+    } else if (t.pic_id) {
+      picId = t.pic_id;
+    }
+
+    return {
+      id: String(t.id || t.songid || t.mid || Math.random().toString(36).substr(2, 8)),
+      name: t.name || t.songname || t.title || '未知歌曲',
+      artist: artistArr,
+      album: albumName,
+      pic_id: picId,
+      url_id: t.id,
+      lyric_id: t.id,
+      source: 'netease',
+      coverUrl: cover
+    };
+  });
+}
+
+async function fetchPlaylistTracks(playlistId) {
+  var tracks = [];
+  // 1. Try GDStudio NetEase playlist API
+  try {
+    var res = await fetch(`https://music-api.gdstudio.xyz/api.php?types=playlist&source=netease&id=${playlistId}`);
+    var data = await res.json();
+    if (data && data.playlist && Array.isArray(data.playlist.tracks)) {
+      tracks = data.playlist.tracks;
+    } else if (Array.isArray(data)) {
+      tracks = data;
+    }
+  } catch (e) {
+    console.warn('[FIRE] GDStudio playlist fetch failed, trying Meting fallback:', e);
+  }
+
+  // 2. Meting API fallback
+  if (!tracks || tracks.length === 0) {
+    try {
+      var metingData = await fetchWithRetry(`https://api.injahow.cn/meting/?server=netease&type=playlist&id=${playlistId}`, {}, 2, 800);
+      if (Array.isArray(metingData) && metingData.length > 0) {
+        tracks = metingData;
+      }
+    } catch (e2) {
+      console.warn('[FIRE] Meting playlist fetch failed:', e2);
+    }
+  }
+
+  return normalizePlaylistTracks(tracks);
+}
+
+async function handlePlaylistAction(pl, action) {
+  showToast(`正在拉取歌单「${pl.name}」曲目...`);
+  var songs = await fetchPlaylistTracks(pl.id);
+  if (!songs || songs.length === 0) {
+    showToast('该歌单未获取到可播放曲目或网络超时');
+    return;
+  }
+
+  if (action === 'append') {
+    appendTracksToCurrent(songs);
+    showToast(`已追加「${pl.name}」（${songs.length} 首）`);
+  } else if (action === 'replace') {
+    replaceCurrentWithTracks(songs);
+    showToast(`已替换并开始播放「${pl.name}」（${songs.length} 首）`);
+  } else if (action === 'import') {
+    saveTracksAsLocalPlaylist(pl.name, songs);
+  }
+}
+
+function appendTracksToCurrent(songs) {
+  var targetName = state.currentPlaylist;
+  if (targetName === '__active_queue__') {
+    if (!Array.isArray(state.activeQueue)) state.activeQueue = [];
+    var existingIds = new Set(state.activeQueue.map(s => s.id));
+    var newSongs = songs.filter(s => !existingIds.has(s.id));
+    state.activeQueue = state.activeQueue.concat(newSongs);
+  } else {
+    if (!targetName || !state.playlists[targetName]) {
+      targetName = '默认歌单';
+      state.currentPlaylist = targetName;
+      if (!state.playlists[targetName]) state.playlists[targetName] = [];
+    }
+    var existingIds = new Set((state.playlists[targetName] || []).map(s => s.id));
+    var newSongs = songs.filter(s => !existingIds.has(s.id));
+    state.playlists[targetName] = (state.playlists[targetName] || []).concat(newSongs);
+  }
+  saveState();
+  renderPlaylistOptions();
+  renderPlaylistSongs();
+}
+
+function replaceCurrentWithTracks(songs) {
+  var targetName = state.currentPlaylist;
+  if (targetName === '__active_queue__') {
+    state.activeQueue = songs;
+  } else {
+    if (!targetName || !state.playlists[targetName]) {
+      targetName = '默认歌单';
+      state.currentPlaylist = targetName;
+    }
+    state.playlists[targetName] = songs;
+  }
+  saveState();
+  renderPlaylistOptions();
+  renderPlaylistSongs();
+  if (songs.length > 0) {
+    playSong(songs[0]);
+  }
+}
+
+function saveTracksAsLocalPlaylist(playlistName, songs) {
+  var baseName = (playlistName || '导入歌单').trim();
+  var uniqueName = baseName;
+  var counter = 1;
+  while (state.playlists[uniqueName]) {
+    uniqueName = `${baseName}_${counter++}`;
+  }
+  state.playlists[uniqueName] = songs;
+  state.currentPlaylist = uniqueName;
+  saveState();
+  renderPlaylistOptions();
+  renderPlaylistSongs();
+  showToast(`已成功保存为本地歌单「${uniqueName}」（${songs.length} 首）`);
+  switchTab('playlists');
+}
+
+async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator) {
+  var doc = getDoc();
+  var panelBody = doc.getElementById('fire-panel-body');
+  if (!panelBody) return;
+
+  closePlaylistPreview(); // Remove existing modal if any
+
+  var modal = doc.createElement('div');
+  modal.id = 'fire-preview-modal';
+  modal.className = 'fire-preview-modal-backdrop';
+
+  var cover = coverUrl || DEFAULT_COVER;
+  var creatorStr = creator || '网络精选';
+
+  modal.innerHTML = `
+    <div class="fire-preview-modal-header">
+      <div class="fire-preview-modal-header-info">
+        <img class="fire-preview-modal-cover" src="${cover}" alt="cover">
+        <div style="min-width:0; flex:1;">
+          <div class="fire-preview-modal-title" title="${escapeHtml(playlistName)}">${escapeHtml(playlistName)}</div>
+          <div class="fire-preview-modal-subtitle" id="fire-preview-subtitle">${escapeHtml(creatorStr)} · 正在加载曲目...</div>
+        </div>
+      </div>
+      <button id="fire-preview-btn-close" class="fire-playlist-act-btn" style="width:28px;height:28px;font-size:13px;" title="关闭"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="fire-preview-modal-actions" id="fire-preview-modal-actions" style="display:none;">
+      <button id="fire-preview-btn-playall" class="fire-btn" title="替换并从头播放全部"><i class="fa-solid fa-play"></i> 播放全部</button>
+      <button id="fire-preview-btn-appendall" class="fire-btn fire-btn-normal" title="追加到当前列表末尾"><i class="fa-solid fa-plus"></i> 全部追加</button>
+      <button id="fire-preview-btn-saveas" class="fire-btn fire-btn-normal" title="保存为本地歌单"><i class="fa-regular fa-star"></i> 存为歌单</button>
+    </div>
+    <div class="fire-preview-modal-body fire-scroll" id="fire-preview-modal-body">
+      <div style="text-align:center;padding:30px 10px;opacity:0.6;font-size:12px;">
+        <i class="fa-solid fa-spinner fa-spin" style="font-size:18px;margin-bottom:8px;display:block;"></i>
+        正在拉取歌单曲目...
+      </div>
+    </div>
+  `;
+
+  panelBody.appendChild(modal);
+
+  // Close event
+  var closeBtn = modal.querySelector('#fire-preview-btn-close');
+  if (closeBtn) {
+    closeBtn.onclick = function() {
+      closePlaylistPreview();
+    };
+  }
+
+  // Fetch tracks
+  var songs = await fetchPlaylistTracks(playlistId);
+  currentPlaylistPreviewTracks = songs;
+
+  var subTitleEl = doc.getElementById('fire-preview-subtitle');
+  var actionsEl = doc.getElementById('fire-preview-modal-actions');
+  var bodyEl = doc.getElementById('fire-preview-modal-body');
+
+  if (!bodyEl) return;
+
+  if (!songs || songs.length === 0) {
+    if (subTitleEl) subTitleEl.textContent = `${creatorStr} · 加载失败或暂无曲目`;
+    bodyEl.innerHTML = '<div style="text-align:center;padding:30px 10px;opacity:0.6;font-size:12px;color:var(--fire-em);">未能获取到曲目列表，请稍后重试</div>';
+    return;
+  }
+
+  if (subTitleEl) subTitleEl.textContent = `${creatorStr} · 共 ${songs.length} 首歌曲`;
+  if (actionsEl) actionsEl.style.display = 'flex';
+
+  // Bind top action buttons
+  var playAllBtn = doc.getElementById('fire-preview-btn-playall');
+  var appendAllBtn = doc.getElementById('fire-preview-btn-appendall');
+  var saveAsBtn = doc.getElementById('fire-preview-btn-saveas');
+
+  if (playAllBtn) {
+    playAllBtn.onclick = function() {
+      replaceCurrentWithTracks(songs);
+      showToast(`已开始播放「${playlistName}」`);
+      closePlaylistPreview();
+    };
+  }
+  if (appendAllBtn) {
+    appendAllBtn.onclick = function() {
+      appendTracksToCurrent(songs);
+      showToast(`已追加「${playlistName}」（${songs.length} 首）`);
+    };
+  }
+  if (saveAsBtn) {
+    saveAsBtn.onclick = function() {
+      saveTracksAsLocalPlaylist(playlistName, songs);
+      closePlaylistPreview();
+    };
+  }
+
+  // Render song rows
+  bodyEl.innerHTML = songs.map((s, idx) => {
+    var artistStr = Array.isArray(s.artist) ? s.artist.join(' / ') : (s.artist || '未知歌手');
+    return `
+      <div class="fire-preview-song-row" data-song-idx="${idx}">
+        <span class="fire-preview-song-idx">${idx + 1}</span>
+        <div class="fire-preview-song-info">
+          <div class="fire-preview-song-name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
+          <div class="fire-preview-song-artist" title="${escapeHtml(artistStr)}">${escapeHtml(artistStr)}</div>
+        </div>
+        <div class="fire-preview-song-btns">
+          <button class="fire-preview-song-play" data-song-idx="${idx}" title="试听/播放此曲"><i class="fa-solid fa-play"></i></button>
+          <button class="fire-preview-song-add" data-song-idx="${idx}" title="添加到当前播放列表"><i class="fa-solid fa-plus"></i></button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Song rows actions
+  bodyEl.querySelectorAll('.fire-preview-song-play').forEach(btn => {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var idx = parseInt(this.getAttribute('data-song-idx'), 10);
+      var s = songs[idx];
+      if (s) {
+        playSong(s);
+      }
+    });
+  });
+
+  bodyEl.querySelectorAll('.fire-preview-song-add').forEach(btn => {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var idx = parseInt(this.getAttribute('data-song-idx'), 10);
+      var s = songs[idx];
+      if (s) {
+        appendTracksToCurrent([s]);
+        showToast(`已添加「${s.name}」到当前列表`);
+      }
+    });
+  });
+}
+
+function closePlaylistPreview() {
+  var doc = getDoc();
+  var existing = doc.getElementById('fire-preview-modal');
+  if (existing && existing.parentNode) {
+    existing.parentNode.removeChild(existing);
+  }
+}
+
+async function performPlaylistSearch(query, page) {
+  if (!query) return;
+  currentSearchQuery = query;
+  currentSearchPlaylistPage = page;
+
+  var doc = getDoc();
+  var container = doc.getElementById('fire-search-results');
+  var pagination = doc.getElementById('fire-search-pagination');
+  var filterBar = doc.getElementById('fire-search-source-filter');
+
+  if (filterBar) filterBar.style.display = 'none';
+
+  if (container) {
+    container.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.6;"><i class="fa-solid fa-spinner fa-spin"></i> 正在搜索网易云歌单...</div>';
+  }
+  if (pagination) pagination.style.display = 'none';
+
+  var offset = (page - 1) * 20;
+  var url = `https://music.163.com/api/search/get/web?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`;
+
+  try {
+    var data = await neteaseFetch(url);
+    var playlists = (data && data.result && data.result.playlists) ? data.result.playlists : [];
+    currentSearchPlaylists = playlists;
+    renderPlaylistSearchResults(playlists);
+
+    if (pagination && playlists.length > 0) {
+      pagination.style.display = 'flex';
+      var pageNumEl = doc.getElementById('fire-page-num');
+      if (pageNumEl) {
+        pageNumEl.textContent = `第 ${page} 页`;
+      }
+      var prevBtn = doc.getElementById('fire-btn-page-prev');
+      var nextBtn = doc.getElementById('fire-btn-page-next');
+      if (prevBtn) prevBtn.style.opacity = (page <= 1) ? '0.4' : '1';
+      if (nextBtn) nextBtn.style.opacity = (playlists.length < 20) ? '0.4' : '1';
+    }
+  } catch (err) {
+    console.error("[FIRE] Playlist search failed:", err);
+    if (container) {
+      container.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.6;color:var(--fire-em);">搜索歌单失败，请检查网络或稍后重试</div>';
+    }
+  }
+}
+
+function renderPlaylistSearchResults(playlists) {
+  var doc = getDoc();
+  var container = doc.getElementById('fire-search-results');
+  if (!container) return;
+
+  if (!playlists || playlists.length === 0) {
+    container.innerHTML = `
+      <div style="text-align:center;padding:30px 10px;opacity:0.6;font-size:12px;">
+        <i class="fa-solid fa-circle-question" style="font-size:24px;margin-bottom:8px;display:block;"></i>
+        未找到相关歌单，换个关键词试试吧
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="fire-playlist-list">
+      ${playlists.map((pl, idx) => {
+        var cover = pl.coverImgUrl || DEFAULT_COVER;
+        var playCountStr = formatPlayCount(pl.playCount);
+        var creatorName = pl.creator ? pl.creator.nickname : '未知创建者';
+        return `
+          <div class="fire-playlist-card" data-idx="${idx}">
+            <div class="fire-playlist-card-cover-wrap">
+              <img class="fire-playlist-card-cover" src="${cover}" alt="cover" loading="lazy">
+              ${playCountStr ? `<div class="fire-playlist-card-badge"><i class="fa-solid fa-headphones"></i> ${playCountStr}</div>` : ''}
+            </div>
+            <div class="fire-playlist-card-info">
+              <div class="fire-playlist-card-title" title="${escapeHtml(pl.name)}">${escapeHtml(pl.name)}</div>
+              <div class="fire-playlist-card-creator" title="${escapeHtml(creatorName)}">
+                <i class="fa-regular fa-user" style="font-size:10px;"></i> ${escapeHtml(creatorName)}
+              </div>
+              <div class="fire-playlist-card-meta">
+                <span><i class="fa-solid fa-music" style="font-size:9px;"></i> ${pl.trackCount || 0} 首歌曲</span>
+              </div>
+            </div>
+            <div class="fire-playlist-card-actions">
+              <button class="fire-playlist-act-btn fire-pl-act-preview" data-idx="${idx}" title="查看歌单曲目"><i class="fa-solid fa-list-ul"></i></button>
+              <button class="fire-playlist-act-btn fire-pl-act-append" data-idx="${idx}" title="追加全部到当前列表"><i class="fa-solid fa-plus"></i></button>
+              <button class="fire-playlist-act-btn fire-pl-act-replace" data-idx="${idx}" title="替换当前列表并播放"><i class="fa-solid fa-play"></i></button>
+              <button class="fire-playlist-act-btn fire-pl-act-import" data-idx="${idx}" title="收藏为本地歌单"><i class="fa-regular fa-star"></i></button>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+
+  // Bind events
+  container.querySelectorAll('.fire-playlist-card').forEach(card => {
+    card.addEventListener('click', function(e) {
+      if (e.target.closest('.fire-playlist-card-actions')) return;
+      var idx = parseInt(this.getAttribute('data-idx'), 10);
+      var pl = playlists[idx];
+      if (pl) {
+        openPlaylistPreview(pl.id, pl.name, pl.coverImgUrl, pl.creator ? pl.creator.nickname : '');
+      }
+    });
+  });
+
+  container.querySelectorAll('.fire-pl-act-preview').forEach(btn => {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var idx = parseInt(this.getAttribute('data-idx'), 10);
+      var pl = playlists[idx];
+      if (pl) {
+        openPlaylistPreview(pl.id, pl.name, pl.coverImgUrl, pl.creator ? pl.creator.nickname : '');
+      }
+    });
+  });
+
+  container.querySelectorAll('.fire-pl-act-append').forEach(btn => {
+    btn.addEventListener('click', async function(e) {
+      e.stopPropagation();
+      var idx = parseInt(this.getAttribute('data-idx'), 10);
+      var pl = playlists[idx];
+      if (pl) {
+        await handlePlaylistAction(pl, 'append');
+      }
+    });
+  });
+
+  container.querySelectorAll('.fire-pl-act-replace').forEach(btn => {
+    btn.addEventListener('click', async function(e) {
+      e.stopPropagation();
+      var idx = parseInt(this.getAttribute('data-idx'), 10);
+      var pl = playlists[idx];
+      if (pl) {
+        await handlePlaylistAction(pl, 'replace');
+      }
+    });
+  });
+
+  container.querySelectorAll('.fire-pl-act-import').forEach(btn => {
+    btn.addEventListener('click', async function(e) {
+      e.stopPropagation();
+      var idx = parseInt(this.getAttribute('data-idx'), 10);
+      var pl = playlists[idx];
+      if (pl) {
+        await handlePlaylistAction(pl, 'import');
+      }
+    });
+  });
+}
+
 async function performSearch(query, page) {
   if (!query) return;
+  if (state.settings.searchMode === 'playlist') {
+    return performPlaylistSearch(query, page);
+  }
   currentSearchQuery = query;
   currentSearchPage = page;
   lastSearchQueryState = null;
@@ -1059,7 +1727,10 @@ function createUI() {
         <i class="fa-solid fa-music"></i>
       </div>
       <div class="fire-header-actions">
-        <div id="fire-settings-toggle" class="fire-header-btn" title="显示模式设置">
+        <div id="fire-minimize-btn" class="fire-header-btn" title="最小化为悬浮球">
+          <i class="fa-solid fa-minus"></i>
+        </div>
+        <div id="fire-settings-toggle" class="fire-header-btn" title="播放器设置">
           <i class="fa-solid fa-gear"></i>
         </div>
         <div id="fire-close-btn" class="fire-header-btn" title="关闭">
@@ -1069,41 +1740,97 @@ function createUI() {
     </div>
     
     <div class="fire-settings-dropdown" id="fire-settings-dropdown">
-      <!-- Section 1: Display Mode -->
+      <!-- Section 1: Entry Points (召出入口) -->
       <div class="fire-settings-section">
+        <div class="fire-settings-section-header" id="fire-settings-header-entry">
+          <span>召出入口</span>
+          <i class="fa-solid fa-chevron-right fire-settings-chevron"></i>
+        </div>
+        <div class="fire-settings-section-content" id="fire-settings-content-entry" style="display: none;">
+          <label class="fire-settings-item" style="justify-content: space-between;">
+            <span>魔法棒菜单 (Extensions Menu)</span>
+            <input type="checkbox" id="fire-entry-wand">
+          </label>
+          <label class="fire-settings-item" style="justify-content: space-between;">
+            <span>快捷回复栏注入 (QR Bar)</span>
+            <input type="checkbox" id="fire-entry-qr">
+          </label>
+          <label class="fire-settings-item" style="justify-content: space-between;">
+            <span>斜杠命令 (/fire)</span>
+            <input type="checkbox" id="fire-entry-slash">
+          </label>
+          <div style="font-size: 11px; color: var(--fire-text-muted, #9ca3af); padding: 4px 6px; line-height: 1.4;">
+            💡 提示：支持全局快捷键 <b>Alt + M</b> 打开/关闭。
+          </div>
+        </div>
+      </div>
+
+      <!-- Section 2: Display Mode (显示形态) -->
+      <div class="fire-settings-section" style="margin-top: 8px; border-top: 1px solid var(--fire-border); padding-top: 8px;">
         <div class="fire-settings-section-header" id="fire-settings-header-display">
-          <span>显示模式</span>
+          <span>显示形态</span>
           <i class="fa-solid fa-chevron-right fire-settings-chevron"></i>
         </div>
         <div class="fire-settings-section-content" id="fire-settings-content-display" style="display: none;">
-          <label class="fire-settings-item">
-            <input type="radio" name="fire-display-mode" value="wand-modal">
-            <span>魔法棒 (普通弹窗)</span>
-          </label>
-          <label class="fire-settings-item">
-            <input type="radio" name="fire-display-mode" value="wand-fullscreen">
-            <span>魔法棒 (全屏模式)</span>
-          </label>
-          <label class="fire-settings-item">
-            <input type="radio" name="fire-display-mode" value="qr-bar">
-            <span>QR 栏 (普通弹窗)</span>
-          </label>
-          <label class="fire-settings-item">
-            <input type="radio" name="fire-display-mode" value="qr-top">
-            <span>QR 栏 (顶部滑出)</span>
-          </label>
-          <label class="fire-settings-item">
-            <input type="radio" name="fire-display-mode" value="qr-bottom">
-            <span>QR 栏 (底部滑出)</span>
-          </label>
-          <label class="fire-settings-item">
-            <input type="radio" name="fire-display-mode" value="qr-left">
-            <span>QR 栏 (左侧滑出)</span>
-          </label>
-          <label class="fire-settings-item">
-            <input type="radio" name="fire-display-mode" value="qr-right">
-            <span>QR 栏 (右侧滑出)</span>
-          </label>
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label class="fire-settings-item">
+              <input type="radio" name="fire-display-type" value="modal">
+              <span>居中弹窗</span>
+            </label>
+            <div id="fire-setting-modal-controls" style="display: none; padding-left: 12px; flex-direction: column; gap: 6px;">
+              <div class="fire-settings-sub-item-slider">
+                <div style="display: flex; justify-content: space-between; font-size: 11px;">
+                  <span>弹窗宽度比例</span>
+                  <span id="fire-setting-modal-width-val">80%</span>
+                </div>
+                <input type="range" id="fire-setting-modal-width" min="40" max="95" step="1">
+              </div>
+              <div class="fire-settings-sub-item-slider">
+                <div style="display: flex; justify-content: space-between; font-size: 11px;">
+                  <span>弹窗高度比例</span>
+                  <span id="fire-setting-modal-height-val">70%</span>
+                </div>
+                <input type="range" id="fire-setting-modal-height" min="40" max="95" step="1">
+              </div>
+            </div>
+
+            <label class="fire-settings-item">
+              <input type="radio" name="fire-display-type" value="drawer">
+              <span>抽屉滑出 (上下左右)</span>
+            </label>
+            <div id="fire-setting-drawer-controls" style="display: none; padding-left: 12px; flex-direction: column; gap: 6px;">
+              <div class="fire-settings-sub-item" style="flex-direction: column; align-items: stretch; gap: 4px;">
+                <span style="font-size: 11px;">滑出方向</span>
+                <select id="fire-setting-drawer-dir" class="fire-select" style="padding: 4px 8px; font-size: 12px; height: 28px;">
+                  <option value="drawer-top">顶部向下滑出</option>
+                  <option value="drawer-bottom">底部向上滑出</option>
+                  <option value="drawer-left">左侧向右滑出</option>
+                  <option value="drawer-right">右侧向左滑出</option>
+                </select>
+              </div>
+              <div class="fire-settings-sub-item-slider">
+                <div style="display: flex; justify-content: space-between; font-size: 11px;">
+                  <span>抽屉大小比例</span>
+                  <span id="fire-setting-drawer-ratio-val">70%</span>
+                </div>
+                <input type="range" id="fire-setting-drawer-ratio" min="30" max="95" step="1">
+              </div>
+            </div>
+
+            <label class="fire-settings-item">
+              <input type="radio" name="fire-display-type" value="floating">
+              <span>自由悬浮窗 (无遮罩·可拖拽/缩放/收纳)</span>
+            </label>
+            <div id="fire-setting-floating-tips" style="display: none; padding-left: 12px; font-size: 11px; color: var(--fire-text-muted, #9ca3af); line-height: 1.4;">
+              💡 悬浮窗可拖拽标题栏移动，拖拽右下角拉伸大小，点击减号 <b>-</b> 可缩小为悬浮球。
+            </div>
+
+            <label class="fire-settings-item">
+              <input type="radio" name="fire-display-type" value="fullscreen">
+              <span>全屏模式</span>
+            </label>
+          </div>
+
           <div style="margin-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 8px;">
             <label class="fire-settings-item" style="justify-content: space-between;">
               <span title="全屏或手机端高度全屏时为顶部状态栏预留安全距离，避免遮挡按钮">状态栏避让</span>
@@ -1364,19 +2091,30 @@ function createUI() {
         </div>
       </div>
 
-      <!-- Section 6.5: Discover Charts Selection -->
+      <!-- Section 6.5: Discover & Charts Settings -->
       <div class="fire-settings-section" style="margin-top: 8px; border-top: 1px solid var(--fire-border); padding-top: 8px;">
         <div class="fire-settings-section-header" id="fire-settings-header-discovercharts">
-          <span>发现榜单展示设置</span>
+          <span>发现与榜单设置</span>
           <i class="fa-solid fa-chevron-right fire-settings-chevron"></i>
         </div>
         <div class="fire-settings-section-content" id="fire-settings-content-discovercharts" style="display: none; padding-top: 6px;">
-          <div style="display: flex; gap: 6px; margin-bottom: 8px;">
-            <button id="fire-btn-charts-select-all" class="fire-btn fire-btn-normal" style="padding: 2px 8px; font-size: 11px;">全选</button>
-            <button id="fire-btn-charts-clear-all" class="fire-btn fire-btn-normal" style="padding: 2px 8px; font-size: 11px;">清空</button>
-            <button id="fire-btn-charts-reset-default" class="fire-btn fire-btn-normal" style="padding: 2px 8px; font-size: 11px;">恢复默认</button>
+          <label class="fire-settings-item" style="justify-content: space-between; margin-bottom: 6px;">
+            <span>启用发现功能标签页</span>
+            <input type="checkbox" id="fire-setting-discover-enabled">
+          </label>
+          <label class="fire-settings-item" style="justify-content: space-between; margin-bottom: 6px;">
+            <span>启用官方排行榜</span>
+            <input type="checkbox" id="fire-setting-charts-enabled">
+          </label>
+          <div id="fire-charts-selection-container" style="border-top: 1px dashed rgba(255,255,255,0.1); padding-top: 6px; margin-top: 4px;">
+            <div style="font-size: 11px; opacity: 0.8; margin-bottom: 6px;">自选展示榜单 (在官方榜单中显示)</div>
+            <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+              <button id="fire-btn-charts-select-all" class="fire-btn fire-btn-normal" style="padding: 2px 8px; font-size: 11px;">全选</button>
+              <button id="fire-btn-charts-clear-all" class="fire-btn fire-btn-normal" style="padding: 2px 8px; font-size: 11px;">清空</button>
+              <button id="fire-btn-charts-reset-default" class="fire-btn fire-btn-normal" style="padding: 2px 8px; font-size: 11px;">恢复默认</button>
+            </div>
+            <div id="fire-discover-charts-selector" style="max-height: 200px; overflow-y: auto; padding-right: 4px;" class="fire-scroll"></div>
           </div>
-          <div id="fire-discover-charts-selector" style="max-height: 220px; overflow-y: auto; padding-right: 4px;" class="fire-scroll"></div>
         </div>
       </div>
 
@@ -1453,7 +2191,7 @@ function createUI() {
         <button id="fire-tab-btn-playlists" class="fire-tab-btn" title="我的歌单">
           <i class="fa-solid fa-list-ul"></i>
         </button>
-        <button id="fire-tab-btn-discover" class="fire-tab-btn" title="发现榜单">
+        <button id="fire-tab-btn-discover" class="fire-tab-btn" title="发现" style="display: ${state.settings.enableDiscoverTab !== false ? '' : 'none'};">
           <i class="fa-solid fa-fire"></i>
         </button>
       </div>
@@ -1488,6 +2226,9 @@ function createUI() {
         <div class="fire-meta-container">
           <div class="fire-song-title-row" style="display: flex; align-items: center; justify-content: center; gap: 6px; position: relative;">
             <div id="fire-song-title" class="fire-song-title">无正在播放歌曲</div>
+            <button id="fire-btn-like" class="fire-btn-like" style="display: none;" title="我喜欢的">
+              <i class="fa-regular fa-heart"></i>
+            </button>
             <button id="fire-btn-simi-toggle" class="fire-btn-simi-toggle" style="display: none; background: none; border: none; padding: 2px 4px; font-size: 12px; color: var(--fire-accent, #a855f7); cursor: pointer; opacity: 0.85; transition: opacity 0.2s;" title="查看相似歌曲推荐">
               <i class="fa-solid fa-shuffle"></i>
             </button>
@@ -1546,14 +2287,18 @@ function createUI() {
         <div class="fire-tab-panels">
           <!-- Search Tab -->
           <div id="fire-tab-panel-search" class="fire-tab-panel active">
+            <div class="fire-search-mode-bar" id="fire-search-mode-bar">
+              <button type="button" class="fire-search-mode-btn ${state.settings.searchMode === 'playlist' ? '' : 'active'}" id="fire-search-mode-song">搜单曲</button>
+              <button type="button" class="fire-search-mode-btn ${state.settings.searchMode === 'playlist' ? 'active' : ''}" id="fire-search-mode-playlist">搜歌单</button>
+            </div>
             <form id="fire-search-form" class="fire-search-form" onsubmit="return false;">
-              <input type="text" id="fire-search-input" class="fire-input" placeholder="输入歌名或歌手搜索..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+              <input type="text" id="fire-search-input" class="fire-input" placeholder="${state.settings.searchMode === 'playlist' ? '输入关键词搜索网易云歌单...' : '输入歌名或歌手搜索...'}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
               <button type="submit" id="fire-search-btn" class="fire-btn">搜索</button>
             </form>
-            <div id="fire-search-source-filter" class="fire-source-filter-bar"></div>
+            <div id="fire-search-source-filter" class="fire-source-filter-bar" style="display: ${state.settings.searchMode === 'playlist' ? 'none' : 'flex'};"></div>
             <div class="fire-music-list fire-scroll" id="fire-search-results">
               <div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">
-                在上方输入关键词搜索歌曲
+                ${state.settings.searchMode === 'playlist' ? '在上方输入关键词搜索网易云歌单' : '在上方输入关键词搜索歌曲'}
               </div>
             </div>
             <div class="fire-pagination" id="fire-search-pagination" style="display:none;">
@@ -1589,12 +2334,21 @@ function createUI() {
 
           <!-- Discover Tab -->
           <div id="fire-tab-panel-discover" class="fire-tab-panel">
+            <div id="fire-discover-subtabs" class="fire-discover-subtabs" style="display: ${state.settings.enableChartsTab !== false ? 'flex' : 'none'};">
+              <button type="button" class="fire-discover-subtab-btn ${state.settings.discoverSubtab === 'charts' ? '' : 'active'}" id="fire-discover-subtab-recommend">
+                <i class="fa-solid fa-compass"></i> 精选推荐
+              </button>
+              <button type="button" class="fire-discover-subtab-btn ${state.settings.discoverSubtab === 'charts' ? 'active' : ''}" id="fire-discover-subtab-charts">
+                <i class="fa-solid fa-trophy"></i> 官方榜单
+              </button>
+            </div>
             <div class="fire-discover-header">
-              <span class="fire-discover-title">网易云热门榜单</span>
+              <span class="fire-discover-title" id="fire-discover-title">网易云精选歌单</span>
               <button id="fire-discover-refresh-btn" class="fire-btn fire-btn-normal" style="padding:4px 10px;font-size:11px;" title="重新加载">刷新</button>
             </div>
+            <div id="fire-discover-cat-bar" class="fire-discover-cat-bar" style="display: ${state.settings.discoverSubtab === 'charts' && state.settings.enableChartsTab !== false ? 'none' : 'flex'};"></div>
             <div class="fire-discover-list fire-scroll" id="fire-discover-list">
-              <div style="text-align:center;padding:20px;opacity:0.5;font-size:12px;">点击「发现」标签加载榜单</div>
+              <div style="text-align:center;padding:20px;opacity:0.5;font-size:12px;">点击「发现」标签加载内容</div>
             </div>
           </div>
         </div>
@@ -1603,8 +2357,38 @@ function createUI() {
 
     <!-- Quick Dropdown Menu for Playlist selection -->
     <div id="fire-add-menu" class="fire-add-menu"></div>
+    <div id="fire-resize-handle" class="fire-resize-handle" title="拖拽调整大小"></div>
   `;
   doc.body.appendChild(panel);
+
+  // Floating Ball (for minimized state)
+  var ball = doc.createElement('div');
+  ball.id = 'fire-float-ball';
+  ball.className = 'fire-float-ball';
+  ball.style.display = 'none';
+  ball.title = 'FIRE 音乐播放器 (点击展开，可拖动)';
+  ball.innerHTML = `
+    <div class="fire-float-ball-inner" id="fire-float-ball-inner">
+      <img id="fire-float-ball-cover" style="display: none;" alt="cover" />
+      <div class="fire-float-center-dot" id="fire-float-center-dot" style="display: none;"></div>
+      <div class="fire-float-wave" id="fire-float-wave" style="display: none;">
+        <span></span><span></span><span></span>
+      </div>
+      <i id="fire-float-ball-icon" class="fa-solid fa-music fire-float-ball-icon"></i>
+    </div>
+    <div class="fire-float-pill pill-left" id="fire-float-pill">
+      <div class="fire-float-pill-info">
+        <span class="fire-float-pill-title" id="fire-float-pill-title">FIRE 音乐</span>
+        <span class="fire-float-pill-artist" id="fire-float-pill-artist">点击展开</span>
+      </div>
+      <div class="fire-float-pill-actions">
+        <button class="fire-pill-btn" id="fire-float-pill-toggle" title="播放/暂停"><i class="fa-solid fa-play"></i></button>
+        <button class="fire-pill-btn" id="fire-float-pill-next" title="下一首"><i class="fa-solid fa-forward-step"></i></button>
+        <button class="fire-pill-btn" id="fire-float-pill-expand" title="展开面板"><i class="fa-solid fa-up-right-and-down-left-from-center"></i></button>
+      </div>
+    </div>
+  `;
+  doc.body.appendChild(ball);
 
   // Toast Container
   var toastEl = doc.createElement('div');
@@ -1622,18 +2406,26 @@ function createUI() {
   renderPlaylistOptions();
   renderPlaylistSongs();
   
-  // Set default settings selection in dropdown
-  var displayRadios = doc.querySelectorAll('input[name="fire-display-mode"]');
-  displayRadios.forEach(radio => {
-    if (radio.value === state.settings.displayMode) {
-      radio.checked = true;
-    }
-  });
+  // Set default entry points selection in dropdown
+  var chkWand = doc.getElementById('fire-entry-wand');
+  if (chkWand) chkWand.checked = state.settings.entryWand !== false;
+  var chkQR = doc.getElementById('fire-entry-qr');
+  if (chkQR) chkQR.checked = !!state.settings.entryQR;
+  var chkSlash = doc.getElementById('fire-entry-slash');
+  if (chkSlash) chkSlash.checked = state.settings.entrySlash !== false;
+
+  // Set default display mode & controls in dropdown
+  syncDisplayTypeSettingsUI(doc);
 
   // Set default status bar avoidance selection
   var chkStatusBarAvoid = doc.getElementById('fire-setting-status-bar-avoidance');
   if (chkStatusBarAvoid) {
     chkStatusBarAvoid.checked = state.settings.statusBarAvoidance !== false;
+  }
+
+  // Restore minimized state if was minimized
+  if (state.settings.isMinimized) {
+    minimizePlayer(true);
   }
 
   // Set default audio quality selection
@@ -1794,6 +2586,28 @@ function bindUIEvents() {
   var closeBtn = doc.getElementById('fire-close-btn');
   if (closeBtn) closeBtn.addEventListener('click', togglePanel);
 
+  // Minimize Button
+  var minBtn = doc.getElementById('fire-minimize-btn');
+  if (minBtn) {
+    minBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      minimizePlayer(true);
+    });
+  }
+
+  // Floating Ball Event Binding
+  var floatBall = doc.getElementById('fire-float-ball');
+  if (floatBall) {
+    bindFloatBallEvents(floatBall);
+  }
+
+  // Floating Window Drag and Resize Bindings
+  var mainPanel = doc.getElementById('fire-panel');
+  var mainHeader = mainPanel ? mainPanel.querySelector('.fire-header') : null;
+  var mainResizeHandle = doc.getElementById('fire-resize-handle');
+  if (mainPanel && mainHeader) bindPanelDrag(mainPanel, mainHeader);
+  if (mainPanel && mainResizeHandle) bindPanelResize(mainPanel, mainResizeHandle);
+
   // Settings Gear Dropdown Toggle
   var settingsBtn = doc.getElementById('fire-settings-toggle');
   var settingsDropdown = doc.getElementById('fire-settings-dropdown');
@@ -1832,6 +2646,7 @@ function bindUIEvents() {
         });
       }
     };
+    setupCollapsibleSetting('fire-settings-header-entry', 'fire-settings-content-entry');
     setupCollapsibleSetting('fire-settings-header-display', 'fire-settings-content-display');
     setupCollapsibleSetting('fire-settings-header-quality', 'fire-settings-content-quality');
     setupCollapsibleSetting('fire-settings-header-lyrics', 'fire-settings-content-lyrics');
@@ -1996,16 +2811,115 @@ function bindUIEvents() {
     });
   }
 
-  // Display Mode Radios
-  var displayRadios = doc.querySelectorAll('input[name="fire-display-mode"]');
-  displayRadios.forEach(radio => {
+  // ─── Entry Point Checkboxes ───
+  var chkWand = doc.getElementById('fire-entry-wand');
+  if (chkWand) {
+    chkWand.addEventListener('change', function () {
+      state.settings.entryWand = !!this.checked;
+      saveState();
+      ensureWandButton();
+      showToast(this.checked ? "已启用魔法棒菜单入口" : "已停用魔法棒菜单入口");
+    });
+  }
+
+  var chkQR = doc.getElementById('fire-entry-qr');
+  if (chkQR) {
+    chkQR.addEventListener('change', function () {
+      state.settings.entryQR = !!this.checked;
+      saveState();
+      ensureQRButton();
+      showToast(this.checked ? "已启用QR栏注入入口" : "已停用QR栏注入入口");
+    });
+  }
+
+  var chkSlash = doc.getElementById('fire-entry-slash');
+  if (chkSlash) {
+    chkSlash.addEventListener('change', function () {
+      state.settings.entrySlash = !!this.checked;
+      saveState();
+      showToast(this.checked ? "已启用斜杠命令 /fire" : "已停用斜杠命令 /fire");
+    });
+  }
+
+  // ─── Display Mode Controls ───
+  var displayTypeRadios = doc.querySelectorAll('input[name="fire-display-type"]');
+  var drawerDirSelect = doc.getElementById('fire-setting-drawer-dir');
+  displayTypeRadios.forEach(radio => {
     radio.addEventListener('change', function () {
+      var val = this.value;
+      if (val === 'modal') {
+        state.settings.displayMode = 'modal';
+      } else if (val === 'fullscreen') {
+        state.settings.displayMode = 'fullscreen';
+      } else if (val === 'floating') {
+        state.settings.displayMode = 'floating';
+      } else if (val === 'drawer') {
+        var dir = drawerDirSelect ? drawerDirSelect.value : 'drawer-top';
+        state.settings.displayMode = dir;
+      }
+      saveState();
+      syncDisplayTypeSettingsUI(doc);
+      applyDisplayMode();
+      showToast("显示形态已更新");
+    });
+  });
+
+  if (drawerDirSelect) {
+    drawerDirSelect.addEventListener('change', function () {
       state.settings.displayMode = this.value;
       saveState();
       applyDisplayMode();
-      showToast("显示模式已更改");
+      showToast("抽屉方向已更新");
     });
-  });
+  }
+
+  var drawerRatioSlider = doc.getElementById('fire-setting-drawer-ratio');
+  var drawerRatioVal = doc.getElementById('fire-setting-drawer-ratio-val');
+  if (drawerRatioSlider) {
+    drawerRatioSlider.value = state.settings.drawerRatio || 70;
+    if (drawerRatioVal) drawerRatioVal.textContent = drawerRatioSlider.value + '%';
+    drawerRatioSlider.addEventListener('input', function () {
+      if (drawerRatioVal) drawerRatioVal.textContent = this.value + '%';
+      state.settings.drawerRatio = parseInt(this.value, 10);
+      applyDisplayMode();
+    });
+    drawerRatioSlider.addEventListener('change', function () {
+      state.settings.drawerRatio = parseInt(this.value, 10);
+      saveState();
+    });
+  }
+
+  var modalWidthSlider = doc.getElementById('fire-setting-modal-width');
+  var modalWidthVal = doc.getElementById('fire-setting-modal-width-val');
+  if (modalWidthSlider) {
+    modalWidthSlider.value = state.settings.modalWidthRatio || 80;
+    if (modalWidthVal) modalWidthVal.textContent = modalWidthSlider.value + '%';
+    modalWidthSlider.addEventListener('input', function () {
+      if (modalWidthVal) modalWidthVal.textContent = this.value + '%';
+      state.settings.modalWidthRatio = parseInt(this.value, 10);
+      applyDisplayMode();
+    });
+    modalWidthSlider.addEventListener('change', function () {
+      state.settings.modalWidthRatio = parseInt(this.value, 10);
+      saveState();
+    });
+  }
+
+  var modalHeightSlider = doc.getElementById('fire-setting-modal-height');
+  var modalHeightVal = doc.getElementById('fire-setting-modal-height-val');
+  if (modalHeightSlider) {
+    modalHeightSlider.value = state.settings.modalHeightRatio || 70;
+    if (modalHeightVal) modalHeightVal.textContent = modalHeightSlider.value + '%';
+    modalHeightSlider.addEventListener('input', function () {
+      if (modalHeightVal) modalHeightVal.textContent = this.value + '%';
+      state.settings.modalHeightRatio = parseInt(this.value, 10);
+      applyDisplayMode();
+    });
+    modalHeightSlider.addEventListener('change', function () {
+      state.settings.modalHeightRatio = parseInt(this.value, 10);
+      saveState();
+    });
+  }
 
   // Status Bar Avoidance Toggle
   var chkStatusBarAvoid = doc.getElementById('fire-setting-status-bar-avoidance');
@@ -2324,6 +3238,17 @@ function bindUIEvents() {
     playBtn.addEventListener('click', togglePlayPause);
   }
 
+  // Like (我喜欢的) Button
+  var likeBtn = doc.getElementById('fire-btn-like');
+  if (likeBtn) {
+    likeBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (state.currentSong) {
+        toggleLikeSong(state.currentSong);
+      }
+    });
+  }
+
   // Next / Prev Buttons
   var nextBtn = doc.getElementById('fire-btn-next');
   if (nextBtn) nextBtn.addEventListener('click', playNext);
@@ -2414,6 +3339,45 @@ function bindUIEvents() {
     });
   }
 
+  // Search Mode Switcher (Song vs Playlist)
+  var btnModeSong = doc.getElementById('fire-search-mode-song');
+  var btnModePlaylist = doc.getElementById('fire-search-mode-playlist');
+  var filterBar = doc.getElementById('fire-search-source-filter');
+  var searchResultsContainer = doc.getElementById('fire-search-results');
+  var paginationContainer = doc.getElementById('fire-search-pagination');
+
+  if (btnModeSong && btnModePlaylist) {
+    btnModeSong.addEventListener('click', function() {
+      state.settings.searchMode = 'song';
+      saveState();
+      btnModeSong.classList.add('active');
+      btnModePlaylist.classList.remove('active');
+      if (searchInput) searchInput.placeholder = '输入歌名或歌手搜索...';
+      if (filterBar) filterBar.style.display = 'flex';
+      if (paginationContainer) paginationContainer.style.display = (currentSearchSongs.length > 0) ? 'flex' : 'none';
+      if (currentSearchSongs.length > 0) {
+        renderSearchResults();
+      } else if (searchResultsContainer) {
+        searchResultsContainer.innerHTML = '<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">在上方输入关键词搜索歌曲</div>';
+      }
+    });
+
+    btnModePlaylist.addEventListener('click', function() {
+      state.settings.searchMode = 'playlist';
+      saveState();
+      btnModePlaylist.classList.add('active');
+      btnModeSong.classList.remove('active');
+      if (searchInput) searchInput.placeholder = '输入关键词搜索网易云歌单...';
+      if (filterBar) filterBar.style.display = 'none';
+      if (paginationContainer) paginationContainer.style.display = (currentSearchPlaylists.length > 0) ? 'flex' : 'none';
+      if (currentSearchPlaylists.length > 0) {
+        renderPlaylistSearchResults(currentSearchPlaylists);
+      } else if (searchResultsContainer) {
+        searchResultsContainer.innerHTML = '<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">在上方输入关键词搜索网易云歌单</div>';
+      }
+    });
+  }
+
   // Search Submit
   var searchForm = doc.getElementById('fire-search-form');
   var searchInput = doc.getElementById('fire-search-input');
@@ -2428,9 +3392,13 @@ function bindUIEvents() {
     var handleSearch = function () {
       var val = searchInput.value.trim();
       if (val) {
-        performSearch(val, 1);
+        if (state.settings.searchMode === 'playlist') {
+          performPlaylistSearch(val, 1);
+        } else {
+          performSearch(val, 1);
+        }
       } else {
-        showToast("请输入歌曲或歌手名称");
+        showToast(state.settings.searchMode === 'playlist' ? "请输入网易云歌单关键词" : "请输入歌曲或歌手名称");
       }
     };
     searchForm.addEventListener('submit', function (e) {
@@ -2444,14 +3412,24 @@ function bindUIEvents() {
   var pageNext = doc.getElementById('fire-btn-page-next');
   if (pagePrev) {
     pagePrev.addEventListener('click', function () {
-      if (currentSearchPage > 1) {
-        performSearch(currentSearchQuery, currentSearchPage - 1);
+      if (state.settings.searchMode === 'playlist') {
+        if (currentSearchPlaylistPage > 1) {
+          performPlaylistSearch(currentSearchQuery, currentSearchPlaylistPage - 1);
+        }
+      } else {
+        if (currentSearchPage > 1) {
+          performSearch(currentSearchQuery, currentSearchPage - 1);
+        }
       }
     });
   }
   if (pageNext) {
     pageNext.addEventListener('click', function () {
-      performSearch(currentSearchQuery, currentSearchPage + 1);
+      if (state.settings.searchMode === 'playlist') {
+        performPlaylistSearch(currentSearchQuery, currentSearchPlaylistPage + 1);
+      } else {
+        performSearch(currentSearchQuery, currentSearchPage + 1);
+      }
     });
   }
 
@@ -2472,7 +3450,7 @@ function bindUIEvents() {
       showPrompt("请输入新歌单名称：", "", "新建歌单").then(name => {
         if (!name) return;
         name = name.trim();
-        if (state.playlists[name]) {
+        if (name === "我喜欢的" || state.playlists[name]) {
           showToast("该歌单已存在");
           return;
         }
@@ -2523,12 +3501,12 @@ function bindUIEvents() {
   if (btnRename) {
     btnRename.addEventListener('click', function () {
       var oldName = state.currentPlaylist;
-      if (oldName === "__active_queue__") return;
+      if (oldName === "__active_queue__" || oldName === "我喜欢的") return;
       showPrompt(`将歌单 "${oldName}" 重命名为：`, oldName, "重命名歌单").then(newName => {
         if (!newName) return;
         newName = newName.trim();
         if (newName === oldName) return;
-        if (state.playlists[newName]) {
+        if (newName === "我喜欢的" || state.playlists[newName]) {
           showToast("同名歌单已存在");
           return;
         }
@@ -2547,12 +3525,12 @@ function bindUIEvents() {
   if (btnDelete) {
     btnDelete.addEventListener('click', function () {
       var name = state.currentPlaylist;
-      if (name === "__active_queue__") return;
+      if (name === "__active_queue__" || name === "我喜欢的") return;
       if (Object.keys(state.playlists).length <= 1) {
         return;
       }
       delete state.playlists[name];
-      state.currentPlaylist = Object.keys(state.playlists)[0];
+      state.currentPlaylist = state.playlists["我喜欢的"] ? "我喜欢的" : Object.keys(state.playlists)[0];
       saveState();
       renderPlaylistOptions();
       renderPlaylistSongs();
@@ -2764,6 +3742,38 @@ var _discoverCache = {};
 function renderDiscoverChartsSettings() {
   var doc = getDoc();
   var container = doc.getElementById('fire-discover-charts-selector');
+  var chkDiscover = doc.getElementById('fire-setting-discover-enabled');
+  var chkCharts = doc.getElementById('fire-setting-charts-enabled');
+  var chartsBox = doc.getElementById('fire-charts-selection-container');
+
+  if (chkDiscover) {
+    chkDiscover.checked = state.settings.enableDiscoverTab !== false;
+    chkDiscover.onchange = function() {
+      state.settings.enableDiscoverTab = !!this.checked;
+      saveState();
+      var tabBtn = doc.getElementById('fire-tab-btn-discover');
+      if (tabBtn) tabBtn.style.display = state.settings.enableDiscoverTab ? '' : 'none';
+      if (!state.settings.enableDiscoverTab && activeTab === 'discover') {
+        switchTab('search');
+      }
+    };
+  }
+
+  if (chkCharts) {
+    chkCharts.checked = state.settings.enableChartsTab !== false;
+    if (chartsBox) {
+      chartsBox.style.display = (state.settings.enableChartsTab !== false) ? 'block' : 'none';
+    }
+    chkCharts.onchange = function() {
+      state.settings.enableChartsTab = !!this.checked;
+      saveState();
+      if (chartsBox) {
+        chartsBox.style.display = state.settings.enableChartsTab ? 'block' : 'none';
+      }
+      renderDiscoverTab(false);
+    };
+  }
+
   if (!container) return;
 
   if (!state.settings.enabledDiscoverCharts) {
@@ -2845,7 +3855,191 @@ function renderDiscoverChartsSettings() {
   }
 }
 
-async function renderDiscoverTab(forceRefresh) {
+function renderDiscoverCategoryBar() {
+  var doc = getDoc();
+  var catBar = doc.getElementById('fire-discover-cat-bar');
+  if (!catBar) return;
+
+  var currentCat = state.settings.discoverCategory || '全部';
+
+  catBar.innerHTML = DISCOVER_CATEGORIES.map(cat => {
+    var isActive = (cat === currentCat) ? 'active' : '';
+    return `<button type="button" class="fire-discover-cat-chip ${isActive}" data-cat="${escapeHtml(cat)}">${escapeHtml(cat)}</button>`;
+  }).join('');
+
+  catBar.querySelectorAll('.fire-discover-cat-chip').forEach(chip => {
+    chip.onclick = function() {
+      var cat = this.getAttribute('data-cat');
+      state.settings.discoverCategory = cat;
+      saveState();
+      renderDiscoverCategoryBar();
+      renderRecommendPlaylists(false);
+    };
+  });
+}
+
+function renderPlaylistCardsIntoList(playlists, containerId) {
+  var doc = getDoc();
+  var container = doc.getElementById(containerId);
+  if (!container) return;
+
+  container.innerHTML = `
+    <div class="fire-playlist-list">
+      ${playlists.map((pl, idx) => {
+        var cover = pl.coverImgUrl || DEFAULT_COVER;
+        var playCountStr = formatPlayCount(pl.playCount);
+        var creatorName = pl.creator ? pl.creator.nickname : '官方精选';
+        return `
+          <div class="fire-playlist-card" data-idx="${idx}">
+            <div class="fire-playlist-card-cover-wrap">
+              <img class="fire-playlist-card-cover" src="${cover}" alt="cover" loading="lazy">
+              ${playCountStr ? `<div class="fire-playlist-card-badge"><i class="fa-solid fa-headphones"></i> ${playCountStr}</div>` : ''}
+            </div>
+            <div class="fire-playlist-card-info">
+              <div class="fire-playlist-card-title" title="${escapeHtml(pl.name)}">${escapeHtml(pl.name)}</div>
+              <div class="fire-playlist-card-creator" title="${escapeHtml(creatorName)}">
+                <i class="fa-regular fa-user" style="font-size:10px;"></i> ${escapeHtml(creatorName)}
+              </div>
+              <div class="fire-playlist-card-meta">
+                <span><i class="fa-solid fa-music" style="font-size:9px;"></i> ${pl.trackCount || 0} 首歌曲</span>
+              </div>
+            </div>
+            <div class="fire-playlist-card-actions">
+              <button class="fire-playlist-act-btn fire-pl-act-preview" data-idx="${idx}" title="查看歌单曲目"><i class="fa-solid fa-list-ul"></i></button>
+              <button class="fire-playlist-act-btn fire-pl-act-append" data-idx="${idx}" title="追加全部到当前列表"><i class="fa-solid fa-plus"></i></button>
+              <button class="fire-playlist-act-btn fire-pl-act-replace" data-idx="${idx}" title="替换当前列表并播放"><i class="fa-solid fa-play"></i></button>
+              <button class="fire-playlist-act-btn fire-pl-act-import" data-idx="${idx}" title="收藏为本地歌单"><i class="fa-regular fa-star"></i></button>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+
+  // Bind events
+  container.querySelectorAll('.fire-playlist-card').forEach(card => {
+    card.addEventListener('click', function(e) {
+      if (e.target.closest('.fire-playlist-card-actions')) return;
+      var idx = parseInt(this.getAttribute('data-idx'), 10);
+      var pl = playlists[idx];
+      if (pl) {
+        openPlaylistPreview(pl.id, pl.name, pl.coverImgUrl, pl.creator ? pl.creator.nickname : '');
+      }
+    });
+  });
+
+  container.querySelectorAll('.fire-pl-act-preview').forEach(btn => {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var idx = parseInt(this.getAttribute('data-idx'), 10);
+      var pl = playlists[idx];
+      if (pl) {
+        openPlaylistPreview(pl.id, pl.name, pl.coverImgUrl, pl.creator ? pl.creator.nickname : '');
+      }
+    });
+  });
+
+  container.querySelectorAll('.fire-pl-act-append').forEach(btn => {
+    btn.addEventListener('click', async function(e) {
+      e.stopPropagation();
+      var idx = parseInt(this.getAttribute('data-idx'), 10);
+      var pl = playlists[idx];
+      if (pl) {
+        await handlePlaylistAction(pl, 'append');
+      }
+    });
+  });
+
+  container.querySelectorAll('.fire-pl-act-replace').forEach(btn => {
+    btn.addEventListener('click', async function(e) {
+      e.stopPropagation();
+      var idx = parseInt(this.getAttribute('data-idx'), 10);
+      var pl = playlists[idx];
+      if (pl) {
+        await handlePlaylistAction(pl, 'replace');
+      }
+    });
+  });
+
+  container.querySelectorAll('.fire-pl-act-import').forEach(btn => {
+    btn.addEventListener('click', async function(e) {
+      e.stopPropagation();
+      var idx = parseInt(this.getAttribute('data-idx'), 10);
+      var pl = playlists[idx];
+      if (pl) {
+        await handlePlaylistAction(pl, 'import');
+      }
+    });
+  });
+}
+
+async function renderRecommendPlaylists(forceRefresh) {
+  var doc = getDoc();
+  var container = doc.getElementById('fire-discover-list');
+  if (!container) return;
+
+  var category = state.settings.discoverCategory || '全部';
+  var cacheKey = 'rec_' + category;
+
+  var cached = !forceRefresh && _recommendCache[cacheKey];
+  if (cached && Array.isArray(cached) && cached.length > 0) {
+    renderPlaylistCardsIntoList(cached, 'fire-discover-list');
+    return;
+  }
+
+  container.innerHTML = `<div style="text-align:center;padding:20px;opacity:0.6;font-size:13px;"><i class="fa-solid fa-spinner fa-spin"></i> 正在精选「${escapeHtml(category)}」推荐歌单...</div>`;
+
+  try {
+    var url = `https://music.163.com/api/playlist/list?cat=${encodeURIComponent(category)}&order=hot&offset=0&limit=30`;
+    var data = await neteaseFetch(url);
+    var playlists = (data && Array.isArray(data.playlists)) ? data.playlists : [];
+
+    // Fallback attempt: highquality
+    if (!playlists || playlists.length === 0) {
+      var hqUrl = `https://music.163.com/api/playlist/highquality/list?cat=${encodeURIComponent(category)}&limit=30`;
+      var hqData = await neteaseFetch(hqUrl);
+      if (hqData && Array.isArray(hqData.playlists)) {
+        playlists = hqData.playlists;
+      }
+    }
+
+    if (!playlists || playlists.length === 0) {
+      container.innerHTML = `
+        <div style="text-align:center;padding:30px 10px;opacity:0.6;font-size:12px;">
+          <i class="fa-solid fa-compact-disc" style="font-size:24px;margin-bottom:8px;display:block;"></i>
+          暂未获取到推荐歌单<br>
+          <button id="fire-btn-retry-rec" class="fire-btn fire-btn-normal" style="margin-top:10px;padding:4px 12px;">重试加载</button>
+        </div>
+      `;
+      var retryBtn = doc.getElementById('fire-btn-retry-rec');
+      if (retryBtn) {
+        retryBtn.onclick = function() {
+          renderRecommendPlaylists(true);
+        };
+      }
+      return;
+    }
+
+    _recommendCache[cacheKey] = playlists;
+    renderPlaylistCardsIntoList(playlists, 'fire-discover-list');
+  } catch (e) {
+    console.error('[FIRE] Failed to fetch recommended playlists:', e);
+    container.innerHTML = `
+      <div style="text-align:center;padding:30px 10px;opacity:0.6;font-size:12px;color:var(--fire-em);">
+        加载推荐歌单失败，请检查网络<br>
+        <button id="fire-btn-retry-rec" class="fire-btn fire-btn-normal" style="margin-top:10px;padding:4px 12px;">点击重试</button>
+      </div>
+    `;
+    var retryBtn2 = doc.getElementById('fire-btn-retry-rec');
+    if (retryBtn2) {
+      retryBtn2.onclick = function() {
+        renderRecommendPlaylists(true);
+      };
+    }
+  }
+}
+
+async function renderChartsList(forceRefresh) {
   var doc = getDoc();
   var container = doc.getElementById('fire-discover-list');
   if (!container) return;
@@ -2857,30 +4051,21 @@ async function renderDiscoverTab(forceRefresh) {
     container.innerHTML = `
       <div style="text-align:center;padding:30px 10px;opacity:0.6;font-size:12px;">
         <i class="fa-solid fa-folder-open" style="font-size:24px;margin-bottom:8px;display:block;"></i>
-        暂无展示的榜单<br>
-        <span style="font-size:11px;opacity:0.8;">请在右上角设置 ⚙️ -> 发现榜单展示设置 中勾选要显示的榜单</span>
+        暂无展示的官方榜单<br>
+        <span style="font-size:11px;opacity:0.8;">请在右上角设置 ⚙️ -> 发现与榜单设置 中勾选要显示的榜单</span>
       </div>
     `;
     return;
   }
 
-  container.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.6;font-size:13px;"><i class="fa-solid fa-spinner fa-spin"></i> 正在加载榜单...</div>';
-
-  // Bind refresh button (safe to re-bind)
-  var refreshBtn = doc.getElementById('fire-discover-refresh-btn');
-  if (refreshBtn) {
-    refreshBtn.onclick = function() {
-      _discoverCache = {};
-      renderDiscoverTab(true);
-    };
-  }
+  container.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.6;font-size:13px;"><i class="fa-solid fa-spinner fa-spin"></i> 正在加载官方榜单...</div>';
 
   // Render chart cards (lazy: fetch previews in background)
   container.innerHTML = visibleCharts.map((chart, idx) => `
     <div class="fire-chart-card" id="fire-chart-card-${idx}" data-chart-idx="${idx}">
       <div class="fire-chart-card-info">
-        <div class="fire-chart-card-name">${chart.name}</div>
-        <div class="fire-chart-card-desc">${chart.desc}</div>
+        <div class="fire-chart-card-name">${escapeHtml(chart.name)}</div>
+        <div class="fire-chart-card-desc">${escapeHtml(chart.desc)}</div>
         <div class="fire-chart-card-preview" id="fire-chart-preview-${idx}">
           <span style="opacity:0.4;font-size:11px;">加载中...</span>
         </div>
@@ -2896,7 +4081,7 @@ async function renderDiscoverTab(forceRefresh) {
   container.querySelectorAll('.fire-btn-discover-append').forEach(btn => {
     btn.addEventListener('click', function(e) {
       e.stopPropagation();
-      var cardIdx = parseInt(this.getAttribute('data-chart-idx'));
+      var cardIdx = parseInt(this.getAttribute('data-chart-idx'), 10);
       var chart = visibleCharts[cardIdx];
       if (chart) {
         var realIdx = DISCOVER_CHARTS.findIndex(c => c.id === chart.id);
@@ -2907,7 +4092,7 @@ async function renderDiscoverTab(forceRefresh) {
   container.querySelectorAll('.fire-btn-discover-replace').forEach(btn => {
     btn.addEventListener('click', function(e) {
       e.stopPropagation();
-      var cardIdx = parseInt(this.getAttribute('data-chart-idx'));
+      var cardIdx = parseInt(this.getAttribute('data-chart-idx'), 10);
       var chart = visibleCharts[cardIdx];
       if (chart) {
         var realIdx = DISCOVER_CHARTS.findIndex(c => c.id === chart.id);
@@ -2920,6 +4105,79 @@ async function renderDiscoverTab(forceRefresh) {
   visibleCharts.forEach((chart, idx) => {
     fetchChartData(chart.id, idx, forceRefresh);
   });
+}
+
+async function renderDiscoverTab(forceRefresh) {
+  var doc = getDoc();
+  var container = doc.getElementById('fire-discover-list');
+  var subtabs = doc.getElementById('fire-discover-subtabs');
+  var catBar = doc.getElementById('fire-discover-cat-bar');
+  var titleEl = doc.getElementById('fire-discover-title');
+  var refreshBtn = doc.getElementById('fire-discover-refresh-btn');
+
+  if (!container) return;
+
+  if (state.settings.enableDiscoverTab === false) {
+    switchTab('search');
+    return;
+  }
+
+  // Update subtabs visibility based on enableChartsTab
+  var isChartsEnabled = state.settings.enableChartsTab !== false;
+  if (subtabs) {
+    subtabs.style.display = isChartsEnabled ? 'flex' : 'none';
+  }
+
+  // If charts are disabled, force recommend subtab
+  if (!isChartsEnabled && state.settings.discoverSubtab === 'charts') {
+    state.settings.discoverSubtab = 'recommend';
+  }
+
+  // Bind refresh button
+  if (refreshBtn) {
+    refreshBtn.onclick = function() {
+      if (state.settings.discoverSubtab === 'charts') {
+        _discoverCache = {};
+        renderChartsList(true);
+      } else {
+        _recommendCache = {};
+        renderRecommendPlaylists(true);
+      }
+    };
+  }
+
+  // Bind subtab switch buttons
+  var btnRec = doc.getElementById('fire-discover-subtab-recommend');
+  var btnCharts = doc.getElementById('fire-discover-subtab-charts');
+  if (btnRec) {
+    btnRec.onclick = function() {
+      state.settings.discoverSubtab = 'recommend';
+      saveState();
+      renderDiscoverTab(false);
+    };
+  }
+  if (btnCharts) {
+    btnCharts.onclick = function() {
+      state.settings.discoverSubtab = 'charts';
+      saveState();
+      renderDiscoverTab(false);
+    };
+  }
+
+  if (state.settings.discoverSubtab === 'charts' && isChartsEnabled) {
+    if (btnRec) btnRec.classList.remove('active');
+    if (btnCharts) btnCharts.classList.add('active');
+    if (titleEl) titleEl.textContent = '网易云官方榜单';
+    if (catBar) catBar.style.display = 'none';
+    renderChartsList(forceRefresh);
+  } else {
+    if (btnRec) btnRec.classList.add('active');
+    if (btnCharts) btnCharts.classList.remove('active');
+    if (titleEl) titleEl.textContent = '网易云精选歌单';
+    if (catBar) catBar.style.display = 'flex';
+    renderDiscoverCategoryBar();
+    renderRecommendPlaylists(forceRefresh);
+  }
 }
 
 async function fetchChartData(chartId, idx, forceRefresh) {
@@ -3098,6 +4356,7 @@ function updatePlaybackUI() {
   var artist = doc.getElementById('fire-song-artist');
   var playBtn = doc.getElementById('fire-btn-play');
   var simiBtn = doc.getElementById('fire-btn-simi-toggle');
+  var likeBtn = doc.getElementById('fire-btn-like');
 
   if (state.currentSong) {
     fetchAndSetCover(state.currentSong);
@@ -3111,6 +4370,14 @@ function updatePlaybackUI() {
     if (title) title.textContent = state.currentSong.name;
     if (artist) artist.textContent = state.currentSong.artist;
     if (simiBtn) simiBtn.style.display = (state.settings.enableSimiSongs !== false) ? 'inline-block' : 'none';
+    if (likeBtn) {
+      likeBtn.style.display = 'inline-flex';
+      var liked = isSongLiked(state.currentSong);
+      likeBtn.innerHTML = liked
+        ? '<i class="fa-solid fa-heart" style="color: #ef4444;"></i>'
+        : '<i class="fa-regular fa-heart"></i>';
+      likeBtn.title = liked ? "从“我喜欢的”移除" : "添加到“我喜欢的”";
+    }
   } else {
     if (cd) {
       cd.src = DEFAULT_COVER;
@@ -3119,6 +4386,7 @@ function updatePlaybackUI() {
     if (title) title.textContent = "无正在播放歌曲";
     if (artist) artist.textContent = "请选择歌曲播放";
     if (simiBtn) simiBtn.style.display = 'none';
+    if (likeBtn) likeBtn.style.display = 'none';
     var box = doc.getElementById('fire-simi-songs-box');
     if (box) box.style.display = 'none';
   }
@@ -3133,6 +4401,7 @@ function updatePlaybackUI() {
   // Refresh lists to highlight currently playing item
   renderSearchResults();
   renderPlaylistSongs();
+  updateFloatBallUI();
 }
 
 function updateVolumeUI() {
@@ -3384,6 +4653,9 @@ function renderSearchResults() {
         <button class="fire-music-item-btn add-btn" title="添加到歌单">
           <i class="fa-solid fa-plus"></i>
         </button>
+        <button class="fire-music-item-btn like-btn ${isSongLiked(song) ? 'liked' : ''}" data-song-id="${song.id}" title="${isSongLiked(song) ? '从“我喜欢的”移除' : '添加到“我喜欢的”'}">
+          <i class="${isSongLiked(song) ? 'fa-solid fa-heart' : 'fa-regular fa-heart'}" style="${isSongLiked(song) ? 'color:#ef4444;' : ''}"></i>
+        </button>
       </div>
     `;
 
@@ -3405,6 +4677,11 @@ function renderSearchResults() {
     item.querySelector('.add-btn').addEventListener('click', function (e) {
       e.stopPropagation();
       showAddToPlaylistMenu(e, song);
+    });
+
+    item.querySelector('.like-btn').addEventListener('click', function (e) {
+      e.stopPropagation();
+      toggleLikeSong(song);
     });
 
     if (song.album) {
@@ -3431,7 +4708,16 @@ function renderPlaylistOptions() {
   optQueue.selected = state.currentPlaylist === "__active_queue__";
   select.appendChild(optQueue);
 
+  // Add Special Option for "我喜欢的" (Favorites)
+  var favCount = (state.playlists["我喜欢的"] || []).length;
+  var optFav = doc.createElement('option');
+  optFav.value = "我喜欢的";
+  optFav.textContent = `❤️ 我喜欢的 (${favCount})`;
+  optFav.selected = state.currentPlaylist === "我喜欢的";
+  select.appendChild(optFav);
+
   Object.keys(state.playlists).forEach(name => {
+    if (name === "我喜欢的") return;
     var opt = doc.createElement('option');
     opt.value = name;
     opt.textContent = name;
@@ -3446,12 +4732,14 @@ function renderPlaylistSongs() {
   if (!container) return;
 
   var isVirtual = state.currentPlaylist === "__active_queue__";
+  var isFavorites = state.currentPlaylist === "我喜欢的";
+  var canManage = !isVirtual && !isFavorites;
   
-  // Decouple Rename and Delete buttons when viewing virtual queue
+  // Decouple Rename and Delete buttons when viewing virtual queue or favorites
   var btnRename = doc.getElementById('fire-btn-playlist-rename');
   var btnDelete = doc.getElementById('fire-btn-playlist-delete');
-  if (btnRename) btnRename.style.display = isVirtual ? 'none' : '';
-  if (btnDelete) btnDelete.style.display = isVirtual ? 'none' : '';
+  if (btnRename) btnRename.style.display = canManage ? '' : 'none';
+  if (btnDelete) btnDelete.style.display = canManage ? '' : 'none';
 
   var list = isVirtual ? (state.activeQueue || []) : (state.playlists[state.currentPlaylist] || []);
   if (!Array.isArray(list)) {
@@ -3459,7 +4747,8 @@ function renderPlaylistSongs() {
   }
 
   if (list.length === 0) {
-    container.innerHTML = `<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">${isVirtual ? '当前播放队列为空' : '歌单中暂无歌曲，去搜索并添加吧！'}</div>`;
+    var emptyMsg = isVirtual ? '当前播放队列为空' : (isFavorites ? '暂无喜欢的歌曲，点击红心收藏喜爱的音乐吧！' : '歌单中暂无歌曲，去搜索并添加吧！');
+    container.innerHTML = `<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">${emptyMsg}</div>`;
     return;
   }
 
@@ -3490,6 +4779,8 @@ function renderPlaylistSongs() {
       ? `<div class="fire-tag-row">${startTimeBadge}${tagBadges}<span class="fire-tag-add">＋标签</span></div>`
       : '';
 
+    var liked = isSongLiked(song);
+
     item.innerHTML = `
       <div style="font-size:11px;opacity:0.5;width:16px;text-align:right;">${idx + 1}</div>
       <div class="fire-music-item-info">
@@ -3501,7 +4792,10 @@ function renderPlaylistSongs() {
         ${song.album ? `<button class="fire-music-item-btn album-btn" title="查看专辑"><i class="fa-solid fa-compact-disc"></i></button>` : ''}
         ${!isVirtual ? `<button class="fire-music-item-btn time-btn" title="编辑起播时间"><i class="fa-solid fa-clock"></i></button>` : ''}
         ${!isVirtual ? `<button class="fire-music-item-btn tag-btn" title="编辑 Tag"><i class="fa-solid fa-tag"></i></button>` : ''}
-        <button class="fire-music-item-btn remove remove-btn" title="${isVirtual ? '从队列移出' : '从歌单移除'}">
+        <button class="fire-music-item-btn like-btn ${liked ? 'liked' : ''}" data-song-id="${song.id}" title="${liked ? '从“我喜欢的”移除' : '添加到“我喜欢的”'}">
+          <i class="${liked ? 'fa-solid fa-heart' : 'fa-regular fa-heart'}" style="${liked ? 'color:#ef4444;' : ''}"></i>
+        </button>
+        <button class="fire-music-item-btn remove remove-btn" title="${isVirtual ? '从队列移出' : (isFavorites ? '从喜欢列表移除' : '从歌单移除')}">
           <i class="fa-solid fa-trash"></i>
         </button>
       </div>
@@ -3514,6 +4808,11 @@ function renderPlaylistSongs() {
       }
       saveState();
       playSong(song);
+    });
+
+    item.querySelector('.like-btn').addEventListener('click', function (e) {
+      e.stopPropagation();
+      toggleLikeSong(song);
     });
 
     item.querySelector('.remove-btn').addEventListener('click', function (e) {
@@ -3727,6 +5026,9 @@ async function viewAlbum(albumName, source) {
             <button class="fire-music-item-btn add-btn" title="添加到歌单">
               <i class="fa-solid fa-plus"></i>
             </button>
+            <button class="fire-music-item-btn like-btn ${isSongLiked(song) ? 'liked' : ''}" data-song-id="${song.id}" title="${isSongLiked(song) ? '从“我喜欢的”移除' : '添加到“我喜欢的”'}">
+              <i class="${isSongLiked(song) ? 'fa-solid fa-heart' : 'fa-regular fa-heart'}" style="${isSongLiked(song) ? 'color:#ef4444;' : ''}"></i>
+            </button>
           </div>
         `;
 
@@ -3747,6 +5049,11 @@ async function viewAlbum(albumName, source) {
         item.querySelector('.add-btn').addEventListener('click', function (e) {
           e.stopPropagation();
           showAddToPlaylistMenu(e, song);
+        });
+
+        item.querySelector('.like-btn').addEventListener('click', function (e) {
+          e.stopPropagation();
+          toggleLikeSong(song);
         });
 
         container.appendChild(item);
@@ -3800,7 +5107,20 @@ function showAddToPlaylistMenu(event, song) {
   if (!menu) return;
 
   menu.innerHTML = '';
+
+  // Show "我喜欢的" first with a heart icon
+  var favItem = doc.createElement('div');
+  favItem.className = 'fire-add-menu-item';
+  favItem.innerHTML = '<i class="fa-solid fa-heart" style="color:#ef4444;margin-right:6px;"></i>我喜欢的';
+  favItem.addEventListener('click', function (e) {
+    e.stopPropagation();
+    menu.style.display = 'none';
+    addSongToPlaylist("我喜欢的", song);
+  });
+  menu.appendChild(favItem);
+
   Object.keys(state.playlists).forEach(name => {
+    if (name === "我喜欢的") return;
     var item = doc.createElement('div');
     item.className = 'fire-add-menu-item';
     item.textContent = name;
@@ -3830,15 +5150,22 @@ function addSongToPlaylist(playlistName, song) {
   
   // Check if song already exists in playlist to prevent duplicates
   var list = state.playlists[playlistName];
-  var exists = list.some(s => s.id === song.id);
+  var exists = list.some(s => String(s.id) === String(song.id));
   if (exists) {
     showToast(`"${song.name}" 已经在歌单 "${playlistName}" 中`);
     return;
   }
 
-  list.push(song);
+  if (playlistName === "我喜欢的") {
+    list.unshift(song);
+  } else {
+    list.push(song);
+  }
   saveState();
   showToast(`已添加 "${song.name}" 到歌单 "${playlistName}"`);
+  if (playlistName === "我喜欢的") {
+    updateLikeUI();
+  }
   if (state.currentPlaylist === playlistName) {
     renderPlaylistSongs();
   }
@@ -3848,8 +5175,14 @@ function removeSongFromPlaylist(index) {
   var list = state.playlists[state.currentPlaylist];
   if (!list || !list[index]) return;
 
+  var isFav = state.currentPlaylist === "我喜欢的";
+  var removedSong = list[index];
   list.splice(index, 1);
   saveState();
+  if (isFav) {
+    updateLikeUI();
+    showToast(`已从“我喜欢的”移除: ${removedSong.name}`);
+  }
   renderPlaylistSongs();
 }
 
@@ -4286,11 +5619,657 @@ function showToast(message) {
   }, 3000);
 }
 
+// ─── Display & Floating Helpers ──────────────────────────────────────────────
+function syncDisplayTypeSettingsUI(doc) {
+  if (!doc) doc = getDoc();
+  var mode = state.settings.displayMode || 'modal';
+  var type = 'modal';
+  if (mode === 'fullscreen') type = 'fullscreen';
+  else if (mode === 'floating') type = 'floating';
+  else if (mode.indexOf('drawer-') === 0 || mode.indexOf('qr-') === 0) type = 'drawer';
+
+  var displayTypeRadios = doc.querySelectorAll('input[name="fire-display-type"]');
+  displayTypeRadios.forEach(radio => {
+    radio.checked = (radio.value === type);
+  });
+
+  var modalControls = doc.getElementById('fire-setting-modal-controls');
+  if (modalControls) modalControls.style.display = (type === 'modal') ? 'flex' : 'none';
+
+  var drawerControls = doc.getElementById('fire-setting-drawer-controls');
+  if (drawerControls) drawerControls.style.display = (type === 'drawer') ? 'flex' : 'none';
+
+  var floatingTips = doc.getElementById('fire-setting-floating-tips');
+  if (floatingTips) floatingTips.style.display = (type === 'floating') ? 'block' : 'none';
+
+  var drawerDirSelect = doc.getElementById('fire-setting-drawer-dir');
+  if (drawerDirSelect && type === 'drawer') {
+    var mappedMode = mode.replace('qr-', 'drawer-');
+    drawerDirSelect.value = mappedMode;
+  }
+
+  var drawerRatioSlider = doc.getElementById('fire-setting-drawer-ratio');
+  var drawerRatioVal = doc.getElementById('fire-setting-drawer-ratio-val');
+  if (drawerRatioSlider) {
+    drawerRatioSlider.value = state.settings.drawerRatio || 70;
+    if (drawerRatioVal) drawerRatioVal.textContent = drawerRatioSlider.value + '%';
+  }
+
+  var modalWidthSlider = doc.getElementById('fire-setting-modal-width');
+  var modalWidthVal = doc.getElementById('fire-setting-modal-width-val');
+  if (modalWidthSlider) {
+    modalWidthSlider.value = state.settings.modalWidthRatio || 80;
+    if (modalWidthVal) modalWidthVal.textContent = modalWidthSlider.value + '%';
+  }
+
+  var modalHeightSlider = doc.getElementById('fire-setting-modal-height');
+  var modalHeightVal = doc.getElementById('fire-setting-modal-height-val');
+  if (modalHeightSlider) {
+    modalHeightSlider.value = state.settings.modalHeightRatio || 70;
+    if (modalHeightVal) modalHeightVal.textContent = modalHeightSlider.value + '%';
+  }
+}
+
+function updatePillOrientation(ball) {
+  if (!ball) return;
+  var pill = ball.querySelector('#fire-float-pill');
+  if (!pill) return;
+  var rect = ball.getBoundingClientRect();
+  if (rect.left < window.innerWidth / 2) {
+    pill.classList.remove('pill-left');
+    pill.classList.add('pill-right');
+  } else {
+    pill.classList.remove('pill-right');
+    pill.classList.add('pill-left');
+  }
+}
+
+function updateFloatBallUI() {
+  var doc = getDoc();
+  var ball = doc.getElementById('fire-float-ball');
+  if (!ball) return;
+
+  var coverImg = doc.getElementById('fire-float-ball-cover');
+  var centerDot = doc.getElementById('fire-float-center-dot');
+  var waveEl = doc.getElementById('fire-float-wave');
+  var icon = doc.getElementById('fire-float-ball-icon');
+  var pillTitle = doc.getElementById('fire-float-pill-title');
+  var pillArtist = doc.getElementById('fire-float-pill-artist');
+  var pillToggle = doc.getElementById('fire-float-pill-toggle');
+
+  ball.classList.toggle('playing', !!state.isPlaying);
+
+  if (state.currentSong) {
+    var title = (state.currentSong.name || '未知曲目') + ' - ' + (state.currentSong.artist || '未知歌手');
+    ball.title = title + ' (点击展开播放器，可拖拽)';
+    if (pillTitle) pillTitle.textContent = state.currentSong.name || '未知曲目';
+    if (pillArtist) pillArtist.textContent = state.currentSong.artist || '未知歌手';
+
+    var cover = state.currentSong.coverUrl || state.currentSong.picUrl;
+    if (cover) {
+      if (coverImg) {
+        coverImg.src = cover;
+        coverImg.style.display = 'block';
+      }
+      if (centerDot) centerDot.style.display = 'block';
+      if (waveEl) waveEl.style.display = 'none';
+      if (icon) icon.style.display = 'none';
+    } else {
+      if (coverImg) coverImg.style.display = 'none';
+      if (centerDot) centerDot.style.display = 'none';
+      if (state.isPlaying) {
+        if (waveEl) waveEl.style.display = 'flex';
+        if (icon) icon.style.display = 'none';
+      } else {
+        if (waveEl) waveEl.style.display = 'none';
+        if (icon) icon.style.display = 'block';
+      }
+    }
+  } else {
+    ball.title = 'FIRE 音乐播放器 (点击展开，可拖拽)';
+    if (pillTitle) pillTitle.textContent = 'FIRE 音乐';
+    if (pillArtist) pillArtist.textContent = '暂无播放曲目';
+    if (coverImg) coverImg.style.display = 'none';
+    if (centerDot) centerDot.style.display = 'none';
+    if (waveEl) waveEl.style.display = 'none';
+    if (icon) icon.style.display = 'block';
+  }
+
+  if (pillToggle) {
+    pillToggle.innerHTML = state.isPlaying
+      ? '<i class="fa-solid fa-pause"></i>'
+      : '<i class="fa-solid fa-play"></i>';
+  }
+
+  updatePillOrientation(ball);
+}
+
+var floatBallAutoHideTimer = null;
+
+function scheduleFloatBallAutoHide(ball) {
+  if (floatBallAutoHideTimer) {
+    clearTimeout(floatBallAutoHideTimer);
+    floatBallAutoHideTimer = null;
+  }
+  if (!ball || ball.style.display === 'none') return;
+  floatBallAutoHideTimer = setTimeout(function() {
+    if (!ball || ball.style.display === 'none' || ball.classList.contains('dragging')) return;
+    var rect = ball.getBoundingClientRect();
+    var w = rect.width || 46;
+    if (rect.left <= 30) {
+      ball.classList.remove('docked-right');
+      ball.classList.add('docked-left');
+    } else if (rect.left >= window.innerWidth - w - 30) {
+      ball.classList.remove('docked-left');
+      ball.classList.add('docked-right');
+    }
+  }, 2500);
+}
+
+function cancelFloatBallAutoHide(ball) {
+  if (floatBallAutoHideTimer) {
+    clearTimeout(floatBallAutoHideTimer);
+    floatBallAutoHideTimer = null;
+  }
+  if (ball) {
+    ball.classList.remove('docked-left', 'docked-right');
+  }
+}
+
+function minimizePlayer(isMin) {
+  var doc = getDoc();
+  var panel = doc.getElementById('fire-panel');
+  var overlay = doc.getElementById('fire-overlay');
+  var ball = doc.getElementById('fire-float-ball');
+
+  state.settings.isMinimized = !!isMin;
+  saveState();
+
+  if (isMin) {
+    if (panel) panel.classList.remove('fire-open');
+    if (overlay) overlay.style.display = 'none';
+    panelOpen = false;
+
+    if (ball) {
+      var ballW = 46;
+      var ballH = 46;
+      var winW = window.innerWidth;
+      var winH = window.innerHeight;
+      var leftVal = state.settings.floatingBallLeft;
+      var topVal = state.settings.floatingBallTop;
+
+      if (!leftVal || !topVal) {
+        leftVal = (winW - ballW) + 'px';
+        topVal = '140px';
+      } else {
+        var curL = parseFloat(leftVal) || 0;
+        var curT = parseFloat(topVal) || 140;
+        curL = (curL + ballW / 2 < winW / 2) ? 0 : (winW - ballW);
+        curT = Math.max(10, Math.min(curT, winH - ballH - 10));
+        leftVal = curL + 'px';
+        topVal = curT + 'px';
+      }
+
+      ball.style.transition = 'left 0.28s cubic-bezier(0.25, 1, 0.5, 1), top 0.28s cubic-bezier(0.25, 1, 0.5, 1), transform 0.28s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.28s ease';
+      ball.style.left = leftVal;
+      ball.style.top = topVal;
+      ball.style.right = 'auto';
+      ball.style.bottom = 'auto';
+      ball.style.display = 'flex';
+      updateFloatBallUI();
+      updatePillOrientation(ball);
+      scheduleFloatBallAutoHide(ball);
+    }
+  } else {
+    if (ball) {
+      cancelFloatBallAutoHide(ball);
+      ball.style.display = 'none';
+    }
+    if (!panelOpen) {
+      togglePanel();
+    }
+  }
+}
+
+function bindFloatBallEvents(ball) {
+  var isDragging = false;
+  var hasMoved = false;
+  var startX, startY;
+  var startLeft, startTop;
+
+  // Mini Hover Capsule Pill Buttons
+  var pillToggle = ball.querySelector('#fire-float-pill-toggle');
+  if (pillToggle) {
+    pillToggle.addEventListener('click', function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      togglePlayPause();
+    });
+  }
+
+  var pillNext = ball.querySelector('#fire-float-pill-next');
+  if (pillNext) {
+    pillNext.addEventListener('click', function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      playNext();
+    });
+  }
+
+  var pillExpand = ball.querySelector('#fire-float-pill-expand');
+  if (pillExpand) {
+    pillExpand.addEventListener('click', function(e) {
+      e.stopPropagation();
+      e.preventDefault();
+      minimizePlayer(false);
+    });
+  }
+
+  // Hover listeners for auto-hide
+  ball.addEventListener('mouseenter', function() {
+    cancelFloatBallAutoHide(ball);
+  });
+  ball.addEventListener('mouseleave', function() {
+    if (!isDragging) scheduleFloatBallAutoHide(ball);
+  });
+
+  // Window resize listener
+  window.addEventListener('resize', function() {
+    if (ball && ball.style.display !== 'none' && !isDragging) {
+      var r = ball.getBoundingClientRect();
+      var w = r.width || 46;
+      if (r.left > window.innerWidth / 2) {
+        ball.style.left = (window.innerWidth - w) + 'px';
+        state.settings.floatingBallLeft = ball.style.left;
+        saveState();
+      }
+      updatePillOrientation(ball);
+      scheduleFloatBallAutoHide(ball);
+    }
+  });
+
+  var onDragEnd = function(currentLeft, currentTop) {
+    var r = ball.getBoundingClientRect();
+    var ballW = r.width || 46;
+    var ballH = r.height || 46;
+    var winW = window.innerWidth;
+    var winH = window.innerHeight;
+
+    // Snap to nearest edge (left or right)
+    var snapLeft = (currentLeft + ballW / 2 < winW / 2) ? 0 : (winW - ballW);
+    var snapTop = Math.max(10, Math.min(currentTop, winH - ballH - 10));
+
+    ball.classList.remove('dragging');
+    ball.style.transition = 'left 0.28s cubic-bezier(0.25, 1, 0.5, 1), top 0.28s cubic-bezier(0.25, 1, 0.5, 1), transform 0.28s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.28s ease';
+    ball.style.left = snapLeft + 'px';
+    ball.style.top = snapTop + 'px';
+    ball.style.right = 'auto';
+    ball.style.bottom = 'auto';
+
+    state.settings.floatingBallLeft = snapLeft + 'px';
+    state.settings.floatingBallTop = snapTop + 'px';
+    saveState();
+
+    updatePillOrientation(ball);
+    scheduleFloatBallAutoHide(ball);
+  };
+
+  ball.addEventListener('mousedown', function(e) {
+    if (e.target.closest('.fire-pill-btn')) {
+      return;
+    }
+    cancelFloatBallAutoHide(ball);
+    ball.classList.add('dragging');
+    ball.style.transition = 'none';
+
+    isDragging = true;
+    hasMoved = false;
+    startX = e.clientX;
+    startY = e.clientY;
+
+    var rect = ball.getBoundingClientRect();
+    startLeft = rect.left;
+    startTop = rect.top;
+
+    var curLeft = startLeft;
+    var curTop = startTop;
+
+    var onMouseMove = function(e) {
+      if (!isDragging) return;
+      var dx = e.clientX - startX;
+      var dy = e.clientY - startY;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+        hasMoved = true;
+      }
+      var newLeft = startLeft + dx;
+      var newTop = startTop + dy;
+      var r = ball.getBoundingClientRect();
+      newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - r.width));
+      newTop = Math.max(0, Math.min(newTop, window.innerHeight - r.height));
+
+      curLeft = newLeft;
+      curTop = newTop;
+      ball.style.left = newLeft + 'px';
+      ball.style.top = newTop + 'px';
+      ball.style.right = 'auto';
+      ball.style.bottom = 'auto';
+
+      updatePillOrientation(ball);
+    };
+
+    var onMouseUp = function() {
+      if (!isDragging) return;
+      isDragging = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+
+      if (hasMoved) {
+        onDragEnd(curLeft, curTop);
+      } else {
+        ball.classList.remove('dragging');
+        scheduleFloatBallAutoHide(ball);
+      }
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    e.preventDefault();
+  });
+
+  ball.addEventListener('touchstart', function(e) {
+    if (e.target.closest('.fire-pill-btn')) {
+      return;
+    }
+    cancelFloatBallAutoHide(ball);
+    ball.classList.add('dragging');
+    ball.style.transition = 'none';
+
+    var touch = e.touches[0];
+    isDragging = true;
+    hasMoved = false;
+    startX = touch.clientX;
+    startY = touch.clientY;
+
+    var rect = ball.getBoundingClientRect();
+    startLeft = rect.left;
+    startTop = rect.top;
+
+    var curLeft = startLeft;
+    var curTop = startTop;
+
+    var onTouchMove = function(e) {
+      if (!isDragging) return;
+      var t = e.touches[0];
+      var dx = t.clientX - startX;
+      var dy = t.clientY - startY;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+        hasMoved = true;
+      }
+      var newLeft = startLeft + dx;
+      var newTop = startTop + dy;
+      var r = ball.getBoundingClientRect();
+      newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - r.width));
+      newTop = Math.max(0, Math.min(newTop, window.innerHeight - r.height));
+
+      curLeft = newLeft;
+      curTop = newTop;
+      ball.style.left = newLeft + 'px';
+      ball.style.top = newTop + 'px';
+      ball.style.right = 'auto';
+      ball.style.bottom = 'auto';
+
+      updatePillOrientation(ball);
+      if (e.cancelable) e.preventDefault();
+    };
+
+    var onTouchEnd = function() {
+      if (!isDragging) return;
+      isDragging = false;
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onTouchEnd);
+
+      if (hasMoved) {
+        onDragEnd(curLeft, curTop);
+      } else {
+        ball.classList.remove('dragging');
+        scheduleFloatBallAutoHide(ball);
+      }
+    };
+
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', onTouchEnd);
+  }, { passive: true });
+
+  ball.addEventListener('click', function(e) {
+    if (e.target.closest('.fire-pill-btn')) {
+      return;
+    }
+    if (hasMoved) {
+      e.stopPropagation();
+      e.preventDefault();
+      hasMoved = false;
+      return;
+    }
+
+    // Touch / Mobile friendly: First tap unfolds control pill, second tap or expand button opens full player
+    var isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    if (isTouch) {
+      if (!ball.classList.contains('show-pill')) {
+        e.stopPropagation();
+        ball.classList.add('show-pill');
+        cancelFloatBallAutoHide(ball);
+
+        var dismissPill = function(ev) {
+          if (!ball.contains(ev.target)) {
+            ball.classList.remove('show-pill');
+            document.removeEventListener('touchstart', dismissPill);
+            document.removeEventListener('click', dismissPill);
+            scheduleFloatBallAutoHide(ball);
+          }
+        };
+        setTimeout(function() {
+          document.addEventListener('touchstart', dismissPill, { passive: true });
+          document.addEventListener('click', dismissPill);
+        }, 100);
+        return;
+      }
+    }
+
+    ball.classList.remove('show-pill');
+    minimizePlayer(false);
+  });
+}
+
+function bindPanelDrag(panel, header) {
+  var isDragging = false;
+  var startX, startY;
+  var startLeft, startTop;
+
+  header.addEventListener('mousedown', function(e) {
+    if (state.settings.displayMode !== 'floating') return;
+    if (e.target.closest('.fire-header-btn') || e.target.closest('input') || e.target.closest('button')) return;
+
+    isDragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+
+    var rect = panel.getBoundingClientRect();
+    startLeft = rect.left;
+    startTop = rect.top;
+
+    var onMouseMove = function(e) {
+      if (!isDragging) return;
+      var dx = e.clientX - startX;
+      var dy = e.clientY - startY;
+
+      var newLeft = startLeft + dx;
+      var newTop = startTop + dy;
+      var r = panel.getBoundingClientRect();
+      newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - r.width));
+      newTop = Math.max(0, Math.min(newTop, window.innerHeight - 40));
+
+      panel.style.setProperty('left', newLeft + 'px', 'important');
+      panel.style.setProperty('top', newTop + 'px', 'important');
+      panel.style.setProperty('right', 'auto', 'important');
+      panel.style.setProperty('bottom', 'auto', 'important');
+    };
+
+    var onMouseUp = function() {
+      if (!isDragging) return;
+      isDragging = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+
+      state.settings.floatingLeft = panel.style.left;
+      state.settings.floatingTop = panel.style.top;
+      saveState();
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    e.preventDefault();
+  });
+
+  header.addEventListener('touchstart', function(e) {
+    if (state.settings.displayMode !== 'floating') return;
+    if (e.target.closest('.fire-header-btn') || e.target.closest('input') || e.target.closest('button')) return;
+
+    var touch = e.touches[0];
+    isDragging = true;
+    startX = touch.clientX;
+    startY = touch.clientY;
+
+    var rect = panel.getBoundingClientRect();
+    startLeft = rect.left;
+    startTop = rect.top;
+
+    var onTouchMove = function(e) {
+      if (!isDragging) return;
+      var t = e.touches[0];
+      var dx = t.clientX - startX;
+      var dy = t.clientY - startY;
+
+      var newLeft = startLeft + dx;
+      var newTop = startTop + dy;
+      var r = panel.getBoundingClientRect();
+      newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - r.width));
+      newTop = Math.max(0, Math.min(newTop, window.innerHeight - 40));
+
+      panel.style.setProperty('left', newLeft + 'px', 'important');
+      panel.style.setProperty('top', newTop + 'px', 'important');
+      panel.style.setProperty('right', 'auto', 'important');
+      panel.style.setProperty('bottom', 'auto', 'important');
+      if (e.cancelable) e.preventDefault();
+    };
+
+    var onTouchEnd = function() {
+      if (!isDragging) return;
+      isDragging = false;
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onTouchEnd);
+
+      state.settings.floatingLeft = panel.style.left;
+      state.settings.floatingTop = panel.style.top;
+      saveState();
+    };
+
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', onTouchEnd);
+  }, { passive: true });
+}
+
+function bindPanelResize(panel, handle) {
+  var isResizing = false;
+  var startX, startY;
+  var startW, startH;
+
+  handle.addEventListener('mousedown', function(e) {
+    if (state.settings.displayMode !== 'floating') return;
+    isResizing = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    startW = panel.offsetWidth;
+    startH = panel.offsetHeight;
+
+    var onMouseMove = function(e) {
+      if (!isResizing) return;
+      var dx = e.clientX - startX;
+      var dy = e.clientY - startY;
+
+      var newW = Math.max(360, Math.min(startW + dx, window.innerWidth - panel.offsetLeft - 10));
+      var newH = Math.max(400, Math.min(startH + dy, window.innerHeight - panel.offsetTop - 10));
+
+      panel.style.setProperty('width', newW + 'px', 'important');
+      panel.style.setProperty('height', newH + 'px', 'important');
+    };
+
+    var onMouseUp = function() {
+      if (!isResizing) return;
+      isResizing = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+
+      state.settings.floatingWidth = parseInt(panel.style.width, 10);
+      state.settings.floatingHeight = parseInt(panel.style.height, 10);
+      saveState();
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  handle.addEventListener('touchstart', function(e) {
+    if (state.settings.displayMode !== 'floating') return;
+    var touch = e.touches[0];
+    isResizing = true;
+    startX = touch.clientX;
+    startY = touch.clientY;
+    startW = panel.offsetWidth;
+    startH = panel.offsetHeight;
+
+    var onTouchMove = function(e) {
+      if (!isResizing) return;
+      var t = e.touches[0];
+      var dx = t.clientX - startX;
+      var dy = t.clientY - startY;
+
+      var newW = Math.max(360, Math.min(startW + dx, window.innerWidth - panel.offsetLeft - 10));
+      var newH = Math.max(400, Math.min(startH + dy, window.innerHeight - panel.offsetTop - 10));
+
+      panel.style.setProperty('width', newW + 'px', 'important');
+      panel.style.setProperty('height', newH + 'px', 'important');
+      if (e.cancelable) e.preventDefault();
+    };
+
+    var onTouchEnd = function() {
+      if (!isResizing) return;
+      isResizing = false;
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onTouchEnd);
+
+      state.settings.floatingWidth = parseInt(panel.style.width, 10);
+      state.settings.floatingHeight = parseInt(panel.style.height, 10);
+      saveState();
+    };
+
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', onTouchEnd);
+    e.stopPropagation();
+  }, { passive: true });
+}
+
 // ─── Panel Entrance Toggle ────────────────────────────────────────────────────
 function togglePanel(e) {
   if (e) {
     if (typeof e.stopPropagation === 'function') e.stopPropagation();
     if (typeof e.preventDefault === 'function') e.preventDefault();
+  }
+
+  if (state.settings.isMinimized) {
+    minimizePlayer(false);
+    return;
   }
 
   if (!isInitDone) return;
@@ -4334,22 +6313,83 @@ function togglePanel(e) {
 function applyDisplayMode() {
   var doc = getDoc();
   var panel = doc.getElementById('fire-panel');
+  var overlay = doc.getElementById('fire-overlay');
+  var minimizeBtn = doc.getElementById('fire-minimize-btn');
   if (!panel) return;
 
-  // Remove only the display mode classes
-  panel.classList.remove('fire-fullscreen', 'fire-qr-top', 'fire-qr-bottom', 'fire-qr-left', 'fire-qr-right');
+  // Remove previous display mode classes
+  panel.classList.remove(
+    'fire-fullscreen', 'fire-modal', 'fire-floating',
+    'fire-drawer-top', 'fire-drawer-bottom', 'fire-drawer-left', 'fire-drawer-right',
+    'fire-qr-top', 'fire-qr-bottom', 'fire-qr-left', 'fire-qr-right'
+  );
   
-  var mode = state.settings.displayMode || 'wand-modal';
-  if (mode === 'wand-fullscreen') {
+  var mode = state.settings.displayMode || 'modal';
+
+  // Apply proportions as CSS variables on panel
+  var drawerRatio = state.settings.drawerRatio || 70;
+  var isHorizontalDrawer = (mode === 'drawer-left' || mode === 'drawer-right');
+  panel.style.setProperty('--fire-drawer-ratio', drawerRatio + (isHorizontalDrawer ? 'vw' : 'vh'));
+
+  var modalW = state.settings.modalWidthRatio || 80;
+  var modalH = state.settings.modalHeightRatio || 70;
+  panel.style.setProperty('--fire-modal-w-ratio', modalW + 'vw');
+  panel.style.setProperty('--fire-modal-h-ratio', modalH + 'vh');
+
+  if (overlay) {
+    if (mode === 'floating') {
+      overlay.classList.add('fire-floating-overlay');
+    } else {
+      overlay.classList.remove('fire-floating-overlay');
+    }
+  }
+
+  // Reset inline position/size overrides
+  panel.style.removeProperty('left');
+  panel.style.removeProperty('top');
+  panel.style.removeProperty('right');
+  panel.style.removeProperty('bottom');
+  panel.style.removeProperty('width');
+  panel.style.removeProperty('height');
+  panel.style.removeProperty('transform');
+
+  if (mode === 'fullscreen') {
     panel.classList.add('fire-fullscreen');
-  } else if (mode === 'qr-top') {
-    panel.classList.add('fire-qr-top');
-  } else if (mode === 'qr-bottom') {
-    panel.classList.add('fire-qr-bottom');
-  } else if (mode === 'qr-left') {
-    panel.classList.add('fire-qr-left');
-  } else if (mode === 'qr-right') {
-    panel.classList.add('fire-qr-right');
+  } else if (mode === 'drawer-top' || mode === 'qr-top') {
+    panel.classList.add('fire-drawer-top', 'fire-qr-top');
+  } else if (mode === 'drawer-bottom' || mode === 'qr-bottom') {
+    panel.classList.add('fire-drawer-bottom', 'fire-qr-bottom');
+  } else if (mode === 'drawer-left' || mode === 'qr-left') {
+    panel.classList.add('fire-drawer-left', 'fire-qr-left');
+  } else if (mode === 'drawer-right' || mode === 'qr-right') {
+    panel.classList.add('fire-drawer-right', 'fire-qr-right');
+  } else if (mode === 'floating') {
+    panel.classList.add('fire-floating');
+    panel.style.setProperty('width', (state.settings.floatingWidth || 700) + 'px', 'important');
+    panel.style.setProperty('height', (state.settings.floatingHeight || 520) + 'px', 'important');
+    panel.style.setProperty('right', 'auto', 'important');
+    panel.style.setProperty('bottom', 'auto', 'important');
+    panel.style.setProperty('transform', 'none', 'important');
+
+    var leftVal, topVal;
+    if (state.settings.floatingLeft && state.settings.floatingTop) {
+      leftVal = state.settings.floatingLeft;
+      topVal = state.settings.floatingTop;
+    } else {
+      var w = state.settings.floatingWidth || 700;
+      var h = state.settings.floatingHeight || 520;
+      leftVal = Math.max(10, Math.round((window.innerWidth - w) / 2)) + 'px';
+      topVal = Math.max(10, Math.round((window.innerHeight - h) / 2)) + 'px';
+    }
+    panel.style.setProperty('left', leftVal, 'important');
+    panel.style.setProperty('top', topVal, 'important');
+  } else {
+    // Default 'modal'
+    panel.classList.add('fire-modal');
+  }
+
+  if (minimizeBtn) {
+    minimizeBtn.style.display = 'inline-flex';
   }
 
   ensureQRButton();
@@ -4378,8 +6418,7 @@ function removeQRButton() {
 }
 
 function ensureQRButton() {
-  var mode = state.settings.displayMode || 'wand-modal';
-  if (mode.indexOf('qr-') !== 0) {
+  if (!state.settings.entryQR) {
     removeQRButton();
     return;
   }
@@ -4430,19 +6469,15 @@ function removeWandButton() {
 }
 
 export function ensureWandButton() {
-  var mode = state.settings.displayMode || 'wand-modal';
-  if (mode.indexOf('wand-') !== 0) {
+  if (state.settings.entryWand === false) {
     removeWandButton();
     return;
   }
 
   try {
     var doc = getDoc();
-    
-    // Check if the button is already in the DOM
     var existing = doc.getElementById('fire_wand_entry');
     if (existing) {
-      // Ensure it is still attached to a valid container
       var container = doc.getElementById('FIRE_wand_container') || 
                       doc.getElementById('fire_wand_container') || 
                       doc.getElementById('extensionsMenu') || 
@@ -4453,7 +6488,6 @@ export function ensureWandButton() {
       return;
     }
 
-    // Determine the best target container
     var target = doc.getElementById('FIRE_wand_container') || 
                  doc.getElementById('fire_wand_container');
                  
@@ -4462,11 +6496,10 @@ export function ensureWandButton() {
                doc.querySelector('#extensionsMenu.options-content');
     }
     
-    if (!target) return; // Wait for DOM to load
+    if (!target) return;
 
     var btn = doc.createElement('div');
     btn.id = 'fire_wand_entry';
-    // Combine classes from old and new SillyTavern versions to support both
     btn.className = 'list_item list-group-item interactable flex-container flexGap5';
     btn.title = '音乐';
     btn.innerHTML = `
@@ -4482,23 +6515,25 @@ export function ensureWandButton() {
 
 function isButtonMounted() {
   var doc = getDoc();
-  var mode = state.settings.displayMode || 'wand-modal';
-  if (mode.indexOf('qr-') === 0) {
-    var btn = doc.getElementById('fire-qr-btn');
-    var container = doc.querySelector('#qr--bar .qr--buttons') || 
-                    doc.querySelector('#qr-bar .qr--buttons') || 
-                    doc.getElementById('qr--bar') || 
-                    doc.getElementById('qr-bar');
-    return !!(btn && container && container.contains(btn));
-  } else if (mode.indexOf('wand-') === 0) {
+  var wandMounted = true;
+  var qrMounted = true;
+  if (state.settings.entryWand !== false) {
     var wandBtn = doc.getElementById('fire_wand_entry');
     var wandContainer = doc.getElementById('FIRE_wand_container') || 
                         doc.getElementById('fire_wand_container') || 
                         doc.getElementById('extensionsMenu') || 
                         doc.querySelector('#extensionsMenu.options-content');
-    return !!(wandBtn && wandContainer && wandContainer.contains(wandBtn));
+    wandMounted = !!(wandBtn && wandContainer && wandContainer.contains(wandBtn));
   }
-  return true;
+  if (state.settings.entryQR) {
+    var qrBtn = doc.getElementById('fire-qr-btn');
+    var qrContainer = doc.querySelector('#qr--bar .qr--buttons') || 
+                      doc.querySelector('#qr-bar .qr--buttons') || 
+                      doc.getElementById('qr--bar') || 
+                      doc.getElementById('qr-bar');
+    qrMounted = !!(qrBtn && qrContainer && qrContainer.contains(qrBtn));
+  }
+  return wandMounted && qrMounted;
 }
 
 function runSelfHealingInjection() {
@@ -4906,7 +6941,11 @@ export function init() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
       name: 'fire',
       callback: () => {
-        togglePanel();
+        if (state.settings.entrySlash !== false) {
+          togglePanel();
+        } else {
+          showToast('斜杠命令 /fire 入口已在设置中停用');
+        }
         return '';
       },
       helpString: '打开/关闭音乐播放器界面 (Toggle FIRE Music Player)',
