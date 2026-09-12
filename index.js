@@ -1115,15 +1115,24 @@ function formatPlayCount(count) {
 async function neteaseFetch(url) {
   // 1. Primary: SillyTavern internal backend proxy /api/search/visit
   try {
-    var headers = (typeof getRequestHeaders === 'function') ? getRequestHeaders() : { 'Content-Type': 'application/json' };
+    var headers = (typeof getRequestHeaders === 'function') ? getRequestHeaders() : {};
+    if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
     var res = await fetch('/api/search/visit', {
       method: 'POST',
       headers: headers,
-      body: JSON.stringify({ url: url, html: false })
+      body: JSON.stringify({ url: url, html: false }),
+      credentials: 'include'
     });
     if (res.ok) {
-      var data = await res.json();
-      if (data) return data;
+      var text = await res.text();
+      try {
+        var data = JSON.parse(text);
+        if (data) return data;
+      } catch (eJson) {
+        console.warn('[FIRE] ST proxy visit JSON parse error:', eJson);
+      }
+    } else {
+      console.warn('[FIRE] ST proxy visit returned status:', res.status);
     }
   } catch (e) {
     console.warn('[FIRE] ST proxy visit failed, trying fallback...', e);
@@ -1131,23 +1140,30 @@ async function neteaseFetch(url) {
 
   // 2. Direct fetch (if environment allows or same-origin)
   try {
-    var directRes = await fetch(url);
+    var directRes = await fetch(url, { signal: AbortSignal.timeout(4000) });
     if (directRes.ok) {
-      return await directRes.json();
+      var directText = await directRes.text();
+      try {
+        return JSON.parse(directText);
+      } catch (eJson2) {}
     }
-  } catch (e2) {
-    // direct fetch failed
-  }
+  } catch (e2) {}
 
-  // 3. Fallback: Public CORS proxy
-  try {
-    var proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url);
-    var pRes = await fetch(proxyUrl, { signal: AbortSignal.timeout(6000) });
-    if (pRes.ok) {
-      return await pRes.json();
-    }
-  } catch (e3) {
-    console.warn('[FIRE] AllOrigins proxy fallback failed:', e3);
+  // 3. Fallback: Public CORS proxies (including multiple reliable fallbacks)
+  var proxies = [
+    'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
+    'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url),
+    'https://corsproxy.io/?url=' + encodeURIComponent(url),
+  ];
+  for (var i = 0; i < proxies.length; i++) {
+    try {
+      var pRes = await fetch(proxies[i], { signal: AbortSignal.timeout(5000) });
+      if (pRes.ok) {
+        var pText = await pRes.text();
+        var pData = JSON.parse(pText);
+        if (pData) return pData;
+      }
+    } catch (eProxy) {}
   }
 
   return null;
@@ -1471,11 +1487,21 @@ async function performPlaylistSearch(query, page) {
   if (pagination) pagination.style.display = 'none';
 
   var offset = (page - 1) * 20;
-  var url = `https://music.163.com/api/search/get/web?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`;
+  var url1 = `https://music.163.com/api/search/get/web?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`;
+  var url2 = `https://music.163.com/api/cloudsearch/pc?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`;
 
   try {
-    var data = await neteaseFetch(url);
-    var playlists = (data && data.result && data.result.playlists) ? data.result.playlists : [];
+    var data = await neteaseFetch(url1);
+    var playlists = (data && data.result && Array.isArray(data.result.playlists)) ? data.result.playlists : [];
+
+    // Dual API redundancy: if web API returned empty or failed, fallback to cloudsearch/pc
+    if (playlists.length === 0) {
+      var data2 = await neteaseFetch(url2);
+      if (data2 && data2.result && Array.isArray(data2.result.playlists)) {
+        playlists = data2.result.playlists;
+      }
+    }
+
     currentSearchPlaylists = playlists;
     renderPlaylistSearchResults(playlists);
 
@@ -2315,9 +2341,9 @@ function createUI() {
               <button type="button" class="fire-search-mode-btn ${state.settings.searchMode === 'playlist' ? '' : 'active'}" id="fire-search-mode-song">搜单曲</button>
               <button type="button" class="fire-search-mode-btn ${state.settings.searchMode === 'playlist' ? 'active' : ''}" id="fire-search-mode-playlist">搜歌单</button>
             </div>
-            <form id="fire-search-form" class="fire-search-form" onsubmit="return false;">
-              <input type="text" id="fire-search-input" class="fire-input" placeholder="${state.settings.searchMode === 'playlist' ? '输入关键词搜索网易云歌单...' : '输入歌名或歌手搜索...'}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-              <button type="submit" id="fire-search-btn" class="fire-btn">搜索</button>
+            <form id="fire-search-form" class="fire-search-form" action="javascript:void(0);">
+              <input type="search" id="fire-search-input" class="fire-input" enterkeyhint="search" placeholder="${state.settings.searchMode === 'playlist' ? '输入关键词搜索网易云歌单...' : '输入歌名或歌手搜索...'}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+              <button type="button" id="fire-search-btn" class="fire-btn">搜索</button>
             </form>
             <div id="fire-search-source-filter" class="fire-source-filter-bar" style="display: ${state.settings.searchMode === 'playlist' ? 'none' : 'flex'};"></div>
             <div class="fire-music-list fire-scroll" id="fire-search-results">
@@ -3404,7 +3430,9 @@ function bindUIEvents() {
   // Search Submit
   var searchForm = doc.getElementById('fire-search-form');
   var searchInput = doc.getElementById('fire-search-input');
-  if (searchForm && searchInput) {
+  var searchBtn = doc.getElementById('fire-search-btn');
+
+  if (searchInput) {
     // Prevent key/input events from bubbling up to SillyTavern global keyboard listeners (resolves typing lag)
     ['keydown', 'keyup', 'keypress', 'input', 'compositionstart', 'compositionend'].forEach(function(evtType) {
       searchInput.addEventListener(evtType, function(e) {
@@ -3424,9 +3452,32 @@ function bindUIEvents() {
         showToast(state.settings.searchMode === 'playlist' ? "请输入网易云歌单关键词" : "请输入歌曲或歌手名称");
       }
     };
-    searchForm.addEventListener('submit', function (e) {
-      e.preventDefault();
-      handleSearch();
+
+    if (searchForm) {
+      searchForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        searchInput.blur();
+        handleSearch();
+      });
+    }
+
+    if (searchBtn) {
+      searchBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        searchInput.blur();
+        handleSearch();
+      });
+    }
+
+    searchInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.keyCode === 13) {
+        e.preventDefault();
+        e.stopPropagation();
+        searchInput.blur();
+        handleSearch();
+      }
     });
   }
 
