@@ -49,6 +49,7 @@ var state = {
     floatingBallLeft: '',
     floatingBallTop: '',
     statusBarAvoidance: true,
+    outsideClickAction: 'close',
     audioQuality: '999',
     desktopLyricsEnabled: false,
     desktopLyricsLocked: false,
@@ -298,6 +299,9 @@ function loadState() {
       state.settings = Object.assign({}, state.settings, JSON.parse(savedSettings));
       if (state.settings.statusBarAvoidance === undefined) {
         state.settings.statusBarAvoidance = true;
+      }
+      if (!state.settings.outsideClickAction) {
+        state.settings.outsideClickAction = 'close';
       }
       if (state.settings.enableChartsTab === undefined) {
         state.settings.enableChartsTab = true;
@@ -1373,6 +1377,11 @@ async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator) 
       closePlaylistPreview();
     };
   }
+  modal.onclick = function(e) {
+    if (e.target === modal) {
+      closePlaylistPreview();
+    }
+  };
 
   // Fetch tracks
   var songs = await fetchPlaylistTracks(playlistId);
@@ -1762,7 +1771,7 @@ function createUI() {
   var overlay = doc.createElement('div');
   overlay.id = 'fire-overlay';
   overlay.addEventListener('click', function (e) {
-    if (e.target === overlay) togglePanel(e);
+    if (e.target === overlay) handleBackdropDismiss(e);
   });
   doc.body.appendChild(overlay);
 
@@ -1881,11 +1890,23 @@ function createUI() {
             </label>
           </div>
 
-          <div style="margin-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 8px;">
+          <div style="margin-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 8px; display: flex; flex-direction: column; gap: 8px;">
             <label class="fire-settings-item" style="justify-content: space-between;">
               <span title="全屏或手机端高度全屏时为顶部状态栏预留安全距离，避免遮挡按钮">状态栏避让</span>
               <input type="checkbox" id="fire-setting-status-bar-avoidance">
             </label>
+            <div class="fire-settings-sub-item" style="flex-direction: column; align-items: stretch; gap: 4px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 11px;" title="在居中弹窗/抽屉模式下点击外部空白遮罩时的动作策略">外部空白点击行为</span>
+                <select id="fire-setting-outside-click-action" class="fire-select" style="padding: 2px 8px; font-size: 11px; height: 26px;">
+                  <option value="close">关闭优先 (直接关闭面板)</option>
+                  <option value="minimize">最小化优先 (收纳为悬浮球)</option>
+                </select>
+              </div>
+              <div style="font-size: 10px; color: var(--fire-text-muted, #9ca3af); line-height: 1.3;">
+                💡 弹窗/抽屉模式下点击外部阴影空白：可选直接关闭面板或缩小为贴边悬浮球。
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -2472,6 +2493,12 @@ function createUI() {
     chkStatusBarAvoid.checked = state.settings.statusBarAvoidance !== false;
   }
 
+  // Set default outside click action selection
+  var selOutsideClick = doc.getElementById('fire-setting-outside-click-action');
+  if (selOutsideClick) {
+    selOutsideClick.value = state.settings.outsideClickAction || 'close';
+  }
+
   // Restore minimized state if was minimized
   if (state.settings.isMinimized) {
     minimizePlayer(true);
@@ -2978,6 +3005,16 @@ function bindUIEvents() {
       saveState();
       applyStatusBarAvoidance();
       showToast(this.checked ? "已开启状态栏避让" : "已关闭状态栏避让");
+    });
+  }
+
+  // Outside Click Action Selector
+  var selOutsideClick = doc.getElementById('fire-setting-outside-click-action');
+  if (selOutsideClick) {
+    selOutsideClick.addEventListener('change', function () {
+      state.settings.outsideClickAction = this.value;
+      saveState();
+      showToast(this.value === 'minimize' ? "已设置为最小化优先（点击空白处缩小为悬浮球）" : "已设置为关闭优先（点击空白处直接关闭）");
     });
   }
 
@@ -5742,6 +5779,11 @@ function syncDisplayTypeSettingsUI(doc) {
     modalHeightSlider.value = state.settings.modalHeightRatio || 70;
     if (modalHeightVal) modalHeightVal.textContent = modalHeightSlider.value + '%';
   }
+
+  var selOutsideClick = doc.getElementById('fire-setting-outside-click-action');
+  if (selOutsideClick) {
+    selOutsideClick.value = state.settings.outsideClickAction || 'close';
+  }
 }
 
 function updatePillOrientation(ball) {
@@ -6367,6 +6409,19 @@ function bindPanelResize(panel, handle) {
     document.addEventListener('touchend', onTouchEnd);
     e.stopPropagation();
   }, { passive: true });
+}
+
+// ─── Backdrop / Outside Click Dismiss Handler ──────────────────────────────────
+function handleBackdropDismiss(e) {
+  if (e) {
+    if (typeof e.stopPropagation === 'function') e.stopPropagation();
+    if (typeof e.preventDefault === 'function') e.preventDefault();
+  }
+  if (state.settings.outsideClickAction === 'minimize') {
+    minimizePlayer(true);
+  } else {
+    togglePanel(e);
+  }
 }
 
 // ─── Panel Entrance Toggle ────────────────────────────────────────────────────
@@ -7070,12 +7125,28 @@ export function init() {
     console.warn("[FIRE] Failed to register slash command /fire:", e);
   }
 
-  // 2. Keyboard Shortcut: Alt + M (press Alt + M globally to open)
+  // 2. Keyboard Shortcut: Alt + M (Toggle) and Escape (Dismiss)
   try {
     window.addEventListener('keydown', function (e) {
       if (e.altKey && (e.key === 'm' || e.key === 'M' || e.keyCode === 77)) {
         e.preventDefault();
         togglePanel();
+      } else if (e.key === 'Escape' && panelOpen) {
+        var doc = getDoc();
+        var previewModal = doc.getElementById('fire-preview-modal');
+        if (previewModal) {
+          e.preventDefault();
+          previewModal.remove();
+          return;
+        }
+        var listenHelp = doc.getElementById('fire-listen-help-modal') || doc.getElementById('fire-listen-template-modal');
+        if (listenHelp) {
+          e.preventDefault();
+          listenHelp.remove();
+          return;
+        }
+        e.preventDefault();
+        handleBackdropDismiss(e);
       }
     });
   } catch (e) {}
