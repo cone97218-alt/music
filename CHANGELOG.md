@@ -1,5 +1,19 @@
 # FIRE (Fly In Rhythmic Expression) 音乐拓展 - 更新日志
 
+## 🛡️ v2.4.8 (2026-09-12)
+
+### 📱 网易云全域三重接口容灾与移动端流式解压双引擎
+- **网易云移动端专属接口（interface.music.163.com）优先中转**：
+  - 传统 `music.163.com/api/search/get/web` 在部分网络环境下会受到网易云 WAF 风控限制，返回空数据或验证码（状态码 200 但业务内容无歌单）；
+  - 全面升级歌单搜索与手机接口自检为「三重梯级容灾链路」：
+    1. **第一梯队**：`interface.music.163.com/api/search/get/web`（网易云移动端专属接口，针对移动网络优化且极低风控限制）；
+    2. **第二梯队**：`music.163.com/api/cloudsearch/pc`（云搜索接口，结构清晰且高可用）；
+    3. **第三梯队**：`music.163.com/api/search/get/web`（经典桌面 Web 接口）。
+- **双引擎解压兼容（Blob Stream + Reader/Writer Fallback）**：
+  - 针对部分移动端 Safari WebKit 在 `Response(ArrayBuffer).body` 管道流上的兼容瑕疵，升级为基于 `Blob.stream()` 与 `reader/writer` 双通道兜底解压，杜绝流锁死或静默解压失败；
+- **自检报告精细化透出**：
+  - 设置面板自检失败时不仅提示 HTTP 状态码，更完整透出网易云返回业务码（如 `200`、`-462`）与响应数据前缀预览，方便秒级定位问题。
+
 ## 🚀 v2.4.7 (2026-09-12)
 
 ### 📱 手机端「返回非标准JSON」与自检日志报错根治

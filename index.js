@@ -1139,8 +1139,45 @@ var lastNeteaseDiag = {
   url: '',
   stProxyStatus: null,
   error: null,
+  code: null,
+  rawPreview: '',
   success: false
 };
+
+async function decompressBytesSafe(bytes, format) {
+  if (typeof DecompressionStream === 'undefined') return null;
+  try {
+    var blob = new Blob([bytes]);
+    var ds = new DecompressionStream(format);
+    var stream = blob.stream().pipeThrough(ds);
+    return await new Response(stream).text();
+  } catch (e1) {
+    try {
+      var ds2 = new DecompressionStream(format);
+      var writer = ds2.writable.getWriter();
+      writer.write(bytes);
+      writer.close();
+      var reader = ds2.readable.getReader();
+      var chunks = [];
+      while (true) {
+        var r = await reader.read();
+        if (r.done) break;
+        chunks.push(r.value);
+      }
+      var total = chunks.reduce(function (a, c) { return a + c.length; }, 0);
+      var u8 = new Uint8Array(total);
+      var off = 0;
+      for (var i = 0; i < chunks.length; i++) {
+        u8.set(chunks[i], off);
+        off += chunks[i].length;
+      }
+      return new TextDecoder('utf-8').decode(u8);
+    } catch (e2) {
+      console.warn('[FIRE] Decompress fallback failed:', e2);
+      return null;
+    }
+  }
+}
 
 async function parseResponseTextSafe(res) {
   try {
@@ -1150,26 +1187,10 @@ async function parseResponseTextSafe(res) {
 
     // Check for gzip magic header (0x1f, 0x8b)
     if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
-      if (typeof DecompressionStream !== 'undefined') {
-        try {
-          var ds = new DecompressionStream('gzip');
-          var stream = new Response(arrayBuf).body.pipeThrough(ds);
-          text = await new Response(stream).text();
-        } catch (eGzip) {
-          console.warn('[FIRE] DecompressionStream gzip failed:', eGzip);
-        }
-      }
+      text = await decompressBytesSafe(bytes, 'gzip');
     } else if (bytes.length >= 2 && bytes[0] === 0x78 && (bytes[1] === 0x01 || bytes[1] === 0x9c || bytes[1] === 0xda)) {
       // Check for deflate magic header
-      if (typeof DecompressionStream !== 'undefined') {
-        try {
-          var ds2 = new DecompressionStream('deflate');
-          var stream2 = new Response(arrayBuf).body.pipeThrough(ds2);
-          text = await new Response(stream2).text();
-        } catch (eDeflate) {
-          console.warn('[FIRE] DecompressionStream deflate failed:', eDeflate);
-        }
-      }
+      text = await decompressBytesSafe(bytes, 'deflate');
     }
 
     if (!text) {
@@ -1180,13 +1201,8 @@ async function parseResponseTextSafe(res) {
     }
     return (text || '').trim();
   } catch (err) {
-    console.warn('[FIRE] parseResponseTextSafe failed, fallback to res.text():', err);
-    try {
-      var fallbackText = await res.text();
-      return (fallbackText || '').trim();
-    } catch (eFallback) {
-      return '';
-    }
+    console.warn('[FIRE] parseResponseTextSafe failed:', err);
+    return '';
   }
 }
 
@@ -1195,6 +1211,8 @@ async function neteaseFetch(url) {
   lastNeteaseDiag.url = url;
   lastNeteaseDiag.stProxyStatus = null;
   lastNeteaseDiag.error = null;
+  lastNeteaseDiag.code = null;
+  lastNeteaseDiag.rawPreview = '';
   lastNeteaseDiag.success = false;
 
   // 1. Primary: SillyTavern internal backend proxy /api/search/visit
@@ -1244,10 +1262,16 @@ async function neteaseFetch(url) {
 
     if (res.ok) {
       var text = await parseResponseTextSafe(res);
+      lastNeteaseDiag.rawPreview = (text || '').slice(0, 120);
       try {
         var data = JSON.parse(text);
         if (data) {
-          lastNeteaseDiag.success = true;
+          lastNeteaseDiag.code = (data.code !== undefined) ? data.code : null;
+          if (data.code && data.code !== 200) {
+            lastNeteaseDiag.error = `网易云业务码: ${data.code} (${data.message || data.msg || '受限或触发验证'})`;
+          } else {
+            lastNeteaseDiag.success = true;
+          }
           return data;
         }
       } catch (eJson) {
@@ -1258,6 +1282,7 @@ async function neteaseFetch(url) {
           try {
             var extracted = JSON.parse(text.slice(firstBrace, lastBrace + 1));
             if (extracted) {
+              lastNeteaseDiag.code = (extracted.code !== undefined) ? extracted.code : null;
               lastNeteaseDiag.success = true;
               return extracted;
             }
@@ -1638,19 +1663,26 @@ async function performPlaylistSearch(query, page) {
   if (pagination) pagination.style.display = 'none';
 
   var offset = (page - 1) * 20;
-  var url1 = `https://music.163.com/api/search/get/web?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`;
-  var url2 = `https://music.163.com/api/cloudsearch/pc?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`;
+  var extractPlaylists = function (d) {
+    if (!d) return [];
+    if (d.result && Array.isArray(d.result.playlists)) return d.result.playlists;
+    if (Array.isArray(d.playlists)) return d.playlists;
+    if (d.data && Array.isArray(d.data.playlists)) return d.data.playlists;
+    return [];
+  };
+
+  var urls = [
+    `https://interface.music.163.com/api/search/get/web?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`,
+    `https://music.163.com/api/cloudsearch/pc?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`,
+    `https://music.163.com/api/search/get/web?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`
+  ];
 
   try {
-    var data = await neteaseFetch(url1);
-    var playlists = (data && data.result && Array.isArray(data.result.playlists)) ? data.result.playlists : [];
-
-    // Dual API redundancy: if web API returned empty or failed, fallback to cloudsearch/pc
-    if (playlists.length === 0) {
-      var data2 = await neteaseFetch(url2);
-      if (data2 && data2.result && Array.isArray(data2.result.playlists)) {
-        playlists = data2.result.playlists;
-      }
+    var playlists = [];
+    for (var uIdx = 0; uIdx < urls.length; uIdx++) {
+      var data = await neteaseFetch(urls[uIdx]);
+      playlists = extractPlaylists(data);
+      if (playlists.length > 0) break;
     }
 
     currentSearchPlaylists = playlists;
@@ -2268,7 +2300,7 @@ function createUI() {
           <div style="margin-top: 8px; padding: 6px 8px; background: rgba(255,255,255,0.04); border-radius: 4px; display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--fire-border);">
             <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
               <span>拓展运行版本</span>
-              <span style="font-weight: bold; color: var(--fire-accent);" title="若版本号不是 v2.4.7，说明手机浏览器命中了旧缓存">v2.4.7</span>
+              <span style="font-weight: bold; color: var(--fire-accent);" title="若版本号不是 v2.4.8，说明手机浏览器命中了旧缓存">v2.4.8</span>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
               <span>手机接口自检</span>
@@ -3109,9 +3141,28 @@ function bindUIEvents() {
       }
       try {
         var t1 = Date.now();
-        var data = await neteaseFetch('https://music.163.com/api/search/get/web?s=' + encodeURIComponent('周杰伦') + '&type=1000&offset=0&limit=3');
+        var extractCount = function (d) {
+          if (!d) return 0;
+          if (d.result && Array.isArray(d.result.playlists)) return d.result.playlists.length;
+          if (Array.isArray(d.playlists)) return d.playlists.length;
+          if (d.data && Array.isArray(d.data.playlists)) return d.data.playlists.length;
+          return 0;
+        };
+
+        var testUrl = 'https://interface.music.163.com/api/search/get/web?s=' + encodeURIComponent('周杰伦') + '&type=1000&offset=0&limit=3';
+        var data = await neteaseFetch(testUrl);
+        var count = extractCount(data);
+
+        if (count === 0) {
+          var fbData = await neteaseFetch('https://music.163.com/api/cloudsearch/pc?s=' + encodeURIComponent('周杰伦') + '&type=1000&offset=0&limit=3');
+          var fbCount = extractCount(fbData);
+          if (fbCount > 0) {
+            data = fbData;
+            count = fbCount;
+          }
+        }
         var cost = Date.now() - t1;
-        var count = (data && data.result && Array.isArray(data.result.playlists)) ? data.result.playlists.length : 0;
+
         if (count > 0) {
           var successMsg = `✅ 接口通畅！耗时 ${cost}ms，成功拉取到 ${count} 条歌单测试数据`;
           if (diagResult) {
@@ -3121,7 +3172,9 @@ function bindUIEvents() {
           showToast(successMsg);
           addLog(successMsg);
         } else {
-          var failMsg = `⚠️ 接口无数据。状态码: ${lastNeteaseDiag.stProxyStatus || '无响应'}，详情: ${lastNeteaseDiag.error || '未解析出有效歌单'}`;
+          var preview = lastNeteaseDiag.rawPreview ? ` [响应: ${lastNeteaseDiag.rawPreview.slice(0, 45)}]` : '';
+          var codeInfo = (lastNeteaseDiag.code !== null && lastNeteaseDiag.code !== undefined) ? `，网易码: ${lastNeteaseDiag.code}` : '';
+          var failMsg = `⚠️ 接口无数据。状态码: ${lastNeteaseDiag.stProxyStatus || '无响应'}${codeInfo}，详情: ${lastNeteaseDiag.error || '未解析出有效歌单'}${preview}`;
           if (diagResult) {
             diagResult.style.color = 'var(--fire-em)';
             diagResult.textContent = failMsg;
