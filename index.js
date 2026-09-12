@@ -549,9 +549,17 @@ function parseStartTime(val, duration) {
 
 // ─── Audio Engine & Playback Logic ───────────────────────────────────────────
 function initAudio() {
+  var topWin = window.parent || window;
+  if (topWin.__FIRE_AUDIO_ENGINE__) {
+    audio = topWin.__FIRE_AUDIO_ENGINE__;
+    return;
+  }
   if (audio) return;
   audio = new Audio();
   audio.volume = state.volume;
+  try {
+    topWin.__FIRE_AUDIO_ENGINE__ = audio;
+  } catch (e) {}
 
   // 监听 loadedmetadata 拿到时长后设定起播时间偏移量
   audio.addEventListener('loadedmetadata', function () {
@@ -596,6 +604,18 @@ function initAudio() {
 
 async function playSong(song) {
   initAudio();
+  if (audio) {
+    try {
+      audio.pause();
+    } catch (e) {}
+  }
+  var topWin = window.parent || window;
+  if (topWin && topWin.__FIRE_AUDIO_ENGINE__ && topWin.__FIRE_AUDIO_ENGINE__ !== audio) {
+    try {
+      topWin.__FIRE_AUDIO_ENGINE__.pause();
+      topWin.__FIRE_AUDIO_ENGINE__.src = '';
+    } catch (e) {}
+  }
   state.currentSong = song;
   lastFailedSongId = null; // Clear duplicate failure check for new play attempt
   updatePlaybackUI();
@@ -967,6 +987,7 @@ function parseLRC(lrcText) {
 }
 
 function togglePlayPause() {
+  initAudio();
   if (!audio || !state.currentSong) {
     var list = state.playlists[state.currentPlaylist] || [];
     if (list.length > 0) {
@@ -976,7 +997,7 @@ function togglePlayPause() {
     }
     return;
   }
-  if (state.isPlaying) {
+  if (!audio.paused) {
     audio.pause();
   } else {
     audio.play().catch(e => console.error(e));
@@ -1702,10 +1723,13 @@ function createUI() {
   var p = getWin();
   var doc = p.document;
 
-  // Tear down existing elements if any (supports hot reload)
-  ['fire-overlay', 'fire-panel', 'fire-toast-element'].forEach(id => {
+  // Tear down existing elements if any (supports hot reload & prevents duplicate floating ball)
+  ['fire-overlay', 'fire-panel', 'fire-toast-element', 'fire-float-ball', 'fire-lyrics-desktop-container'].forEach(id => {
     var el = doc.getElementById(id);
     if (el) el.remove();
+  });
+  doc.querySelectorAll('#fire-float-ball, .fire-float-ball, #fire-panel, #fire-overlay').forEach(el => {
+    el.remove();
   });
 
   // Overlay
@@ -6904,6 +6928,13 @@ function showAddLocalSongDialog() {
 
 // ─── Extension Initializer ────────────────────────────────────────────────────
 export function init() {
+  var topWin = window.parent || window;
+  if (topWin.__FIRE_MUSIC_INIT_DONE__) {
+    console.warn("[FIRE] Music extension already initialized in this window. Skipping duplicate activation.");
+    return;
+  }
+  topWin.__FIRE_MUSIC_INIT_DONE__ = true;
+
   loadState();
   initLyricsWidget(state, getDoc, saveState, {
     playNext: playNext,
