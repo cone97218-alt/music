@@ -1738,11 +1738,24 @@ async function performPlaylistSearch(query, page) {
   try {
     var playlists = [];
     if (plSource === 'vkeys_tencent') {
-      var qqRes = await fetch(`https://api.vkeys.cn/music/tencent/search/playlist?keyword=${encodeURIComponent(query)}&page=${page}&limit=20`);
-      if (qqRes.ok) {
-        var qqData = await qqRes.json();
-        if (qqData && (qqData.code === 0 || qqData.code === 200) && qqData.data && Array.isArray(qqData.data.list)) {
-          playlists = qqData.data.list.map(item => ({
+      var batchSize = 10;
+      var startIdx = (page - 1) * batchSize + 1;
+      var pageIndices = [];
+      for (var pOffset = 0; pOffset < batchSize; pOffset++) {
+        pageIndices.push(startIdx + pOffset);
+      }
+
+      var batchResults = await Promise.all(pageIndices.map(function(pIdx) {
+        return fetch(`https://api.vkeys.cn/music/tencent/search/playlist?keyword=${encodeURIComponent(query)}&page=${pIdx}`)
+          .then(function(r) { return r.ok ? r.json() : null; })
+          .catch(function() { return null; });
+      }));
+
+      // Check if upstream returns multiple items in a single response (if upstream fixes perPage: 1)
+      var firstData = batchResults[0];
+      if (firstData && (firstData.code === 0 || firstData.code === 200) && firstData.data && Array.isArray(firstData.data.list) && firstData.data.list.length > 1) {
+        playlists = firstData.data.list.map(function(item) {
+          return {
             id: String(item.dissID),
             name: item.dissName,
             coverImgUrl: item.dissPic,
@@ -1750,7 +1763,28 @@ async function performPlaylistSearch(query, page) {
             playCount: item.listenum || 0,
             creator: { nickname: item.creator || 'QQ音乐精选' },
             source: 'vkeys_tencent'
-          }));
+          };
+        });
+      } else {
+        var seenIds = new Set();
+        playlists = [];
+        for (var bIdx = 0; bIdx < batchResults.length; bIdx++) {
+          var resData = batchResults[bIdx];
+          if (resData && (resData.code === 0 || resData.code === 200) && resData.data && Array.isArray(resData.data.list)) {
+            var item = resData.data.list[0];
+            if (item && item.dissID && !seenIds.has(String(item.dissID))) {
+              seenIds.add(String(item.dissID));
+              playlists.push({
+                id: String(item.dissID),
+                name: item.dissName,
+                coverImgUrl: item.dissPic,
+                trackCount: item.songCount || 0,
+                playCount: item.listenum || 0,
+                creator: { nickname: item.creator || 'QQ音乐精选' },
+                source: 'vkeys_tencent'
+              });
+            }
+          }
         }
       }
     } else {
@@ -1790,8 +1824,9 @@ async function performPlaylistSearch(query, page) {
       }
       var prevBtn = doc.getElementById('fire-btn-page-prev');
       var nextBtn = doc.getElementById('fire-btn-page-next');
+      var threshold = (plSource === 'vkeys_tencent') ? 10 : 20;
       if (prevBtn) prevBtn.style.opacity = (page <= 1) ? '0.4' : '1';
-      if (nextBtn) nextBtn.style.opacity = (playlists.length < 20) ? '0.4' : '1';
+      if (nextBtn) nextBtn.style.opacity = (playlists.length < threshold) ? '0.4' : '1';
     }
   } catch (err) {
     console.error("[FIRE] Playlist search failed:", err);
@@ -2708,8 +2743,9 @@ function createUI() {
               <button type="button" class="fire-search-mode-btn ${state.settings.searchMode === 'playlist' ? 'active' : ''}" id="fire-search-mode-playlist">搜歌单</button>
             </div>
             <div class="fire-playlist-source-bar" id="fire-playlist-source-bar" style="display: ${state.settings.searchMode === 'playlist' ? 'flex' : 'none'};">
-              <button type="button" class="fire-pl-source-btn ${state.settings.playlistSearchSource === 'vkeys_tencent' ? 'active' : ''}" id="fire-pl-source-qq" data-source="vkeys_tencent">QQ歌单 (手机/推荐)</button>
-              <button type="button" class="fire-pl-source-btn ${state.settings.playlistSearchSource === 'netease' ? 'active' : ''}" id="fire-pl-source-netease" data-source="netease">网易云歌单 (电脑Web)</button>
+              <span class="fire-pl-source-label"><i class="fa-solid fa-layer-group"></i> 歌单源:</span>
+              <button type="button" class="fire-pl-source-btn ${state.settings.playlistSearchSource === 'vkeys_tencent' ? 'active' : ''}" id="fire-pl-source-qq" data-source="vkeys_tencent"><i class="fa-solid fa-bolt"></i> QQ音乐 (免代理)</button>
+              <button type="button" class="fire-pl-source-btn ${state.settings.playlistSearchSource === 'netease' ? 'active' : ''}" id="fire-pl-source-netease" data-source="netease"><i class="fa-solid fa-server"></i> 网易云 (电脑Web)</button>
             </div>
             <form id="fire-search-form" class="fire-search-form" action="javascript:void(0);">
               <input type="search" id="fire-search-input" class="fire-input" enterkeyhint="search" placeholder="${state.settings.searchMode === 'playlist' ? (state.settings.playlistSearchSource === 'netease' ? '输入关键词搜索网易云歌单...' : '输入关键词搜索QQ音乐歌单...') : '输入歌名或歌手搜索...'}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
