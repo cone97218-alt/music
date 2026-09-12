@@ -145,6 +145,16 @@ function triggerError(msg) {
   }
 }
 
+function addLog(msg) {
+  var time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  errorLogs.unshift(`[${time}] ${msg}`);
+  if (errorLogs.length > MAX_ERROR_LOGS) {
+    errorLogs.pop();
+  }
+  renderLogsUI();
+}
+var logInfo = addLog;
+
 function renderLogsUI() {
   var doc = getDoc();
   var container = doc.getElementById('fire-logs-container');
@@ -1132,6 +1142,54 @@ var lastNeteaseDiag = {
   success: false
 };
 
+async function parseResponseTextSafe(res) {
+  try {
+    var arrayBuf = await res.arrayBuffer();
+    var bytes = new Uint8Array(arrayBuf);
+    var text = '';
+
+    // Check for gzip magic header (0x1f, 0x8b)
+    if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) {
+      if (typeof DecompressionStream !== 'undefined') {
+        try {
+          var ds = new DecompressionStream('gzip');
+          var stream = new Response(arrayBuf).body.pipeThrough(ds);
+          text = await new Response(stream).text();
+        } catch (eGzip) {
+          console.warn('[FIRE] DecompressionStream gzip failed:', eGzip);
+        }
+      }
+    } else if (bytes.length >= 2 && bytes[0] === 0x78 && (bytes[1] === 0x01 || bytes[1] === 0x9c || bytes[1] === 0xda)) {
+      // Check for deflate magic header
+      if (typeof DecompressionStream !== 'undefined') {
+        try {
+          var ds2 = new DecompressionStream('deflate');
+          var stream2 = new Response(arrayBuf).body.pipeThrough(ds2);
+          text = await new Response(stream2).text();
+        } catch (eDeflate) {
+          console.warn('[FIRE] DecompressionStream deflate failed:', eDeflate);
+        }
+      }
+    }
+
+    if (!text) {
+      text = new TextDecoder('utf-8').decode(bytes);
+    }
+    if (text && text.charCodeAt(0) === 0xFEFF) {
+      text = text.slice(1);
+    }
+    return (text || '').trim();
+  } catch (err) {
+    console.warn('[FIRE] parseResponseTextSafe failed, fallback to res.text():', err);
+    try {
+      var fallbackText = await res.text();
+      return (fallbackText || '').trim();
+    } catch (eFallback) {
+      return '';
+    }
+  }
+}
+
 async function neteaseFetch(url) {
   lastNeteaseDiag.time = new Date().toLocaleTimeString();
   lastNeteaseDiag.url = url;
@@ -1185,7 +1243,7 @@ async function neteaseFetch(url) {
     }
 
     if (res.ok) {
-      var text = await res.text();
+      var text = await parseResponseTextSafe(res);
       try {
         var data = JSON.parse(text);
         if (data) {
@@ -1193,8 +1251,20 @@ async function neteaseFetch(url) {
           return data;
         }
       } catch (eJson) {
+        // Fallback: extract substring between first '{' and last '}'
+        var firstBrace = text.indexOf('{');
+        var lastBrace = text.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace > firstBrace) {
+          try {
+            var extracted = JSON.parse(text.slice(firstBrace, lastBrace + 1));
+            if (extracted) {
+              lastNeteaseDiag.success = true;
+              return extracted;
+            }
+          } catch (eExt) {}
+        }
         lastNeteaseDiag.error = '返回数据非标准JSON格式: ' + (text ? text.slice(0, 40) : '空');
-        console.warn('[FIRE] ST proxy visit JSON parse error:', eJson);
+        console.warn('[FIRE] ST proxy visit JSON parse error:', eJson, text ? text.slice(0, 80) : '');
       }
     } else {
       lastNeteaseDiag.error = '酒馆中转接口响应状态 HTTP ' + res.status + (res.status === 403 ? ' (无权限/未登录用户账户)' : '');
@@ -1209,7 +1279,7 @@ async function neteaseFetch(url) {
   try {
     var directRes = await fetch(url, { signal: AbortSignal.timeout(3000) });
     if (directRes.ok) {
-      var directText = await directRes.text();
+      var directText = await parseResponseTextSafe(directRes);
       try {
         var dData = JSON.parse(directText);
         if (dData) {
@@ -1229,12 +1299,14 @@ async function neteaseFetch(url) {
     try {
       var pRes = await fetch(proxies[i], { signal: AbortSignal.timeout(4000) });
       if (pRes.ok) {
-        var pText = await pRes.text();
-        var pData = JSON.parse(pText);
-        if (pData) {
-          lastNeteaseDiag.success = true;
-          return pData;
-        }
+        var pText = await parseResponseTextSafe(pRes);
+        try {
+          var pData = JSON.parse(pText);
+          if (pData) {
+            lastNeteaseDiag.success = true;
+            return pData;
+          }
+        } catch (eProxy) {}
       }
     } catch (eProxy) {}
   }
@@ -1548,6 +1620,7 @@ function closePlaylistPreview() {
 }
 
 async function performPlaylistSearch(query, page) {
+  query = (query || '').replace(/[\u200B-\u200D\uFEFF\u00A0]/g, ' ').trim();
   if (!query) return;
   currentSearchQuery = query;
   currentSearchPlaylistPage = page;
@@ -1720,6 +1793,7 @@ function renderPlaylistSearchResults(playlists) {
 }
 
 async function performSearch(query, page) {
+  query = (query || '').replace(/[\u200B-\u200D\uFEFF\u00A0]/g, ' ').trim();
   if (!query) return;
   if (state.settings.searchMode === 'playlist') {
     return performPlaylistSearch(query, page);
@@ -2194,7 +2268,7 @@ function createUI() {
           <div style="margin-top: 8px; padding: 6px 8px; background: rgba(255,255,255,0.04); border-radius: 4px; display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--fire-border);">
             <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
               <span>拓展运行版本</span>
-              <span style="font-weight: bold; color: var(--fire-accent);" title="若版本号不是 v2.4.6，说明手机浏览器命中了旧缓存">v2.4.6</span>
+              <span style="font-weight: bold; color: var(--fire-accent);" title="若版本号不是 v2.4.7，说明手机浏览器命中了旧缓存">v2.4.7</span>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
               <span>手机接口自检</span>
@@ -3662,7 +3736,7 @@ function bindUIEvents() {
 
     var searchDebounceTimer = null;
     var handleSearch = function () {
-      var val = searchInput.value.trim();
+      var val = (searchInput.value || '').replace(/[\u200B-\u200D\uFEFF\u00A0]/g, ' ').trim();
       if (val) {
         if (state.settings.searchMode === 'playlist') {
           performPlaylistSearch(val, 1);
