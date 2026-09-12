@@ -85,6 +85,7 @@ var state = {
     enableChartsTab: true,
     enableDiscoverTab: true,
     searchMode: 'song',
+    playlistSearchSource: (typeof window !== 'undefined' && (window.__TAURITAVERN__ || window.__TAURI__)) ? 'vkeys_tencent' : 'vkeys_tencent',
     discoverSubtab: 'recommend',
     discoverCategory: '全部',
     enableSimiSongs: true,
@@ -329,6 +330,9 @@ function loadState() {
       }
       if (!state.settings.searchMode) {
         state.settings.searchMode = 'song';
+      }
+      if (!state.settings.playlistSearchSource) {
+        state.settings.playlistSearchSource = (typeof window !== 'undefined' && (window.__TAURITAVERN__ || window.__TAURI__)) ? 'vkeys_tencent' : 'vkeys_tencent';
       }
       if (!state.settings.discoverSubtab) {
         state.settings.discoverSubtab = 'recommend';
@@ -837,6 +841,40 @@ async function fetchAndParseLyrics(songId, source) {
     return;
   }
 
+  if (source === 'vkeys_tencent') {
+    try {
+      var vkeysLrcRes = await fetch(`https://api.vkeys.cn/v2/music/tencent/lyric?id=${songId}`);
+      if (vkeysLrcRes.ok) {
+        var vkeysLrcData = await vkeysLrcRes.json();
+        if (vkeysLrcData && vkeysLrcData.code === 200 && vkeysLrcData.data && (vkeysLrcData.data.lrc || vkeysLrcData.data.yrc)) {
+          var original = parseLRC(vkeysLrcData.data.lrc || '');
+          if (vkeysLrcData.data.trans) {
+            var translated = parseLRC(vkeysLrcData.data.trans);
+            original.forEach(line => {
+              var match = null;
+              var minDiff = 0.5;
+              translated.forEach(tLine => {
+                var diff = Math.abs(line.time - tLine.time);
+                if (diff < minDiff) {
+                  minDiff = diff;
+                  match = tLine;
+                }
+              });
+              line.translation = (match && match.text.trim()) ? match.text.trim() : '';
+            });
+          }
+          lyricsList = original;
+          setCache('lyric', cacheKey, lyricsList);
+          renderLyrics();
+          updateDesktopLyrics(-1, lyricsList);
+          return;
+        }
+      }
+    } catch (errLrc) {
+      console.warn('[FIRE] vkeys_tencent lyric fetch failed, falling back to GDStudio:', errLrc);
+    }
+  }
+
   try {
     var res = await fetch(`https://music-api.gdstudio.xyz/api.php?types=lyric&source=${source || 'netease'}&id=${songId}`);
     if (res.status === 429) {
@@ -1206,6 +1244,15 @@ async function parseResponseTextSafe(res) {
   }
 }
 
+function isValidNeteaseData(data) {
+  if (!data || typeof data !== 'object') return false;
+  if (data.result && (Array.isArray(data.result.playlists) || Array.isArray(data.result.songs))) return true;
+  if (Array.isArray(data.playlists) || Array.isArray(data.songs)) return true;
+  if (data.data && (Array.isArray(data.data.playlists) || Array.isArray(data.data.list) || Array.isArray(data.data.songs))) return true;
+  if (typeof data.code === 'number' && (data.result || data.data || data.playlists || data.songs)) return true;
+  return false;
+}
+
 async function neteaseFetch(url) {
   lastNeteaseDiag.time = new Date().toLocaleTimeString();
   lastNeteaseDiag.url = url;
@@ -1215,89 +1262,83 @@ async function neteaseFetch(url) {
   lastNeteaseDiag.rawPreview = '';
   lastNeteaseDiag.success = false;
 
-  // 1. Primary: SillyTavern internal backend proxy /api/search/visit
-  try {
-    var headers = (typeof getRequestHeaders === 'function') ? getRequestHeaders() : {};
-    if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+  var isTauriEnv = (typeof window !== 'undefined' && !!(window.__TAURITAVERN__ || window.__TAURI__));
 
-    // Auto-heal missing CSRF token on mobile
-    if (!headers['X-CSRF-Token'] && !headers['x-csrf-token']) {
-      try {
-        var tRes = await fetch('/csrf-token', { credentials: 'include' });
-        if (tRes.ok) {
-          var tJson = await tRes.json();
-          if (tJson && tJson.token) headers['X-CSRF-Token'] = tJson.token;
-        }
-      } catch (eToken) {}
-    }
+  // 1. Primary: SillyTavern internal backend proxy /api/search/visit (Node.js Express only)
+  if (!isTauriEnv) {
+    try {
+      var headers = (typeof getRequestHeaders === 'function') ? getRequestHeaders() : {};
+      if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
 
-    var res = await fetch('/api/search/visit', {
-      method: 'POST',
-      headers: headers,
-      body: JSON.stringify({ url: url, html: false }),
-      credentials: 'include'
-    });
-
-    lastNeteaseDiag.stProxyStatus = res.status;
-
-    // If 403 Forbidden, retry once with a freshly requested CSRF token
-    if (res.status === 403) {
-      try {
-        var tRes2 = await fetch('/csrf-token', { credentials: 'include' });
-        if (tRes2.ok) {
-          var tJson2 = await tRes2.json();
-          if (tJson2 && tJson2.token) {
-            headers['X-CSRF-Token'] = tJson2.token;
-            res = await fetch('/api/search/visit', {
-              method: 'POST',
-              headers: headers,
-              body: JSON.stringify({ url: url, html: false }),
-              credentials: 'include'
-            });
-            lastNeteaseDiag.stProxyStatus = res.status;
+      // Auto-heal missing CSRF token on mobile
+      if (!headers['X-CSRF-Token'] && !headers['x-csrf-token']) {
+        try {
+          var tRes = await fetch('/csrf-token', { credentials: 'include' });
+          if (tRes.ok) {
+            var tJson = await tRes.json();
+            if (tJson && tJson.token) headers['X-CSRF-Token'] = tJson.token;
           }
-        }
-      } catch (eRetry) {}
-    }
-
-    if (res.ok) {
-      var text = await parseResponseTextSafe(res);
-      lastNeteaseDiag.rawPreview = (text || '').slice(0, 120);
-      try {
-        var data = JSON.parse(text);
-        if (data) {
-          lastNeteaseDiag.code = (data.code !== undefined) ? data.code : null;
-          if (data.code && data.code !== 200) {
-            lastNeteaseDiag.error = `网易云业务码: ${data.code} (${data.message || data.msg || '受限或触发验证'})`;
-          } else {
-            lastNeteaseDiag.success = true;
-          }
-          return data;
-        }
-      } catch (eJson) {
-        // Fallback: extract substring between first '{' and last '}'
-        var firstBrace = text.indexOf('{');
-        var lastBrace = text.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace > firstBrace) {
-          try {
-            var extracted = JSON.parse(text.slice(firstBrace, lastBrace + 1));
-            if (extracted) {
-              lastNeteaseDiag.code = (extracted.code !== undefined) ? extracted.code : null;
-              lastNeteaseDiag.success = true;
-              return extracted;
-            }
-          } catch (eExt) {}
-        }
-        lastNeteaseDiag.error = '返回数据非标准JSON格式: ' + (text ? text.slice(0, 40) : '空');
-        console.warn('[FIRE] ST proxy visit JSON parse error:', eJson, text ? text.slice(0, 80) : '');
+        } catch (eToken) {}
       }
-    } else {
-      lastNeteaseDiag.error = '酒馆中转接口响应状态 HTTP ' + res.status + (res.status === 403 ? ' (无权限/未登录用户账户)' : '');
-      console.warn('[FIRE] ST proxy visit returned status:', res.status);
+
+      var res = await fetch('/api/search/visit', {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({ url: url, html: false }),
+        credentials: 'include'
+      });
+
+      lastNeteaseDiag.stProxyStatus = res.status;
+
+      // If 403 Forbidden, retry once with a freshly requested CSRF token
+      if (res.status === 403) {
+        try {
+          var tRes2 = await fetch('/csrf-token', { credentials: 'include' });
+          if (tRes2.ok) {
+            var tJson2 = await tRes2.json();
+            if (tJson2 && tJson2.token) {
+              headers['X-CSRF-Token'] = tJson2.token;
+              res = await fetch('/api/search/visit', {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify({ url: url, html: false }),
+                credentials: 'include'
+              });
+              lastNeteaseDiag.stProxyStatus = res.status;
+            }
+          }
+        } catch (eRetry) {}
+      }
+
+      if (res.ok) {
+        var text = await parseResponseTextSafe(res);
+        lastNeteaseDiag.rawPreview = (text || '').slice(0, 120);
+        var isHtml = /^\s*<!DOCTYPE|^\s*<html/i.test(text);
+        if (!isHtml) {
+          try {
+            var data = JSON.parse(text);
+            if (isValidNeteaseData(data)) {
+              lastNeteaseDiag.code = (data.code !== undefined) ? data.code : null;
+              if (data.code && data.code !== 200) {
+                lastNeteaseDiag.error = `网易云业务码: ${data.code} (${data.message || data.msg || '受限或触发验证'})`;
+              } else {
+                lastNeteaseDiag.success = true;
+              }
+              return data;
+            }
+          } catch (eJson) {}
+        }
+        lastNeteaseDiag.error = isHtml ? '中转端点返回网页内容(非Node代理环境)' : '接口返回非有效网易云数据';
+      } else {
+        lastNeteaseDiag.error = '酒馆中转接口响应状态 HTTP ' + res.status + (res.status === 403 ? ' (无权限/未登录用户账户)' : '');
+        console.warn('[FIRE] ST proxy visit returned status:', res.status);
+      }
+    } catch (e) {
+      lastNeteaseDiag.error = '酒馆中转请求异常: ' + (e.message || String(e));
+      console.warn('[FIRE] ST proxy visit failed, trying fallback...', e);
     }
-  } catch (e) {
-    lastNeteaseDiag.error = '酒馆中转请求异常: ' + (e.message || String(e));
-    console.warn('[FIRE] ST proxy visit failed, trying fallback...', e);
+  } else {
+    lastNeteaseDiag.error = '当前为Tauri原生应用环境，无Node.js /api/search/visit代理';
   }
 
   // 2. Direct fetch (if environment allows or same-origin)
@@ -1307,7 +1348,7 @@ async function neteaseFetch(url) {
       var directText = await parseResponseTextSafe(directRes);
       try {
         var dData = JSON.parse(directText);
-        if (dData) {
+        if (isValidNeteaseData(dData)) {
           lastNeteaseDiag.success = true;
           return dData;
         }
@@ -1327,7 +1368,7 @@ async function neteaseFetch(url) {
         var pText = await parseResponseTextSafe(pRes);
         try {
           var pData = JSON.parse(pText);
-          if (pData) {
+          if (isValidNeteaseData(pData)) {
             lastNeteaseDiag.success = true;
             return pData;
           }
@@ -1390,8 +1431,37 @@ function normalizePlaylistTracks(tracks) {
   });
 }
 
-async function fetchPlaylistTracks(playlistId) {
+async function fetchPlaylistTracks(playlistId, source) {
   var tracks = [];
+
+  // QQ Music / vkeys playlist via dissInfo
+  if (source === 'vkeys_tencent' || source === 'tencent') {
+    try {
+      var qqDissRes = await fetch(`https://api.vkeys.cn/v2/music/tencent/dissInfo?id=${playlistId}`);
+      if (qqDissRes.ok) {
+        var qqDissData = await qqDissRes.json();
+        if (qqDissData && qqDissData.code === 200 && qqDissData.data && Array.isArray(qqDissData.data.list)) {
+          return qqDissData.data.list.map(item => ({
+            id: String(item.id),
+            name: item.song || item.title || '未知歌曲',
+            artist: Array.isArray(item.singer_list) && item.singer_list.length > 0 
+              ? item.singer_list.map(s => s.name) 
+              : (item.singer ? [item.singer] : ['未知歌手']),
+            album: item.album || '',
+            pic_id: item.cover || '',
+            url_id: item.id,
+            lyric_id: item.id,
+            source: 'vkeys_tencent',
+            coverUrl: item.cover || '',
+            _vkeys_mid: item.mid || ''
+          }));
+        }
+      }
+    } catch (eQQ) {
+      console.warn('[FIRE] QQ playlist fetch failed, falling back:', eQQ);
+    }
+  }
+
   // 1. Try GDStudio NetEase playlist API
   try {
     var res = await fetch(`https://music-api.gdstudio.xyz/api.php?types=playlist&source=netease&id=${playlistId}`);
@@ -1422,7 +1492,7 @@ async function fetchPlaylistTracks(playlistId) {
 
 async function handlePlaylistAction(pl, action) {
   showToast(`正在拉取歌单「${pl.name}」曲目...`);
-  var songs = await fetchPlaylistTracks(pl.id);
+  var songs = await fetchPlaylistTracks(pl.id, pl.source);
   if (!songs || songs.length === 0) {
     showToast('该歌单未获取到可播放曲目或网络超时');
     return;
@@ -1496,7 +1566,7 @@ function saveTracksAsLocalPlaylist(playlistName, songs) {
   switchTab('playlists');
 }
 
-async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator) {
+async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator, source) {
   var doc = getDoc();
   var panelBody = doc.getElementById('fire-panel-body');
   if (!panelBody) return;
@@ -1550,7 +1620,7 @@ async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator) 
   };
 
   // Fetch tracks
-  var songs = await fetchPlaylistTracks(playlistId);
+  var songs = await fetchPlaylistTracks(playlistId, source);
   currentPlaylistPreviewTracks = songs;
 
   var subTitleEl = doc.getElementById('fire-preview-subtitle');
@@ -1657,32 +1727,56 @@ async function performPlaylistSearch(query, page) {
 
   if (filterBar) filterBar.style.display = 'none';
 
+  var plSource = state.settings.playlistSearchSource || 'vkeys_tencent';
+  var sourceName = plSource === 'vkeys_tencent' ? 'QQ音乐' : '网易云';
+
   if (container) {
-    container.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.6;"><i class="fa-solid fa-spinner fa-spin"></i> 正在搜索网易云歌单...</div>';
+    container.innerHTML = `<div style="text-align:center;padding:20px;opacity:0.6;"><i class="fa-solid fa-spinner fa-spin"></i> 正在搜索${sourceName}歌单...</div>`;
   }
   if (pagination) pagination.style.display = 'none';
 
-  var offset = (page - 1) * 20;
-  var extractPlaylists = function (d) {
-    if (!d) return [];
-    if (d.result && Array.isArray(d.result.playlists)) return d.result.playlists;
-    if (Array.isArray(d.playlists)) return d.playlists;
-    if (d.data && Array.isArray(d.data.playlists)) return d.data.playlists;
-    return [];
-  };
-
-  var urls = [
-    `https://interface.music.163.com/api/search/get/web?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`,
-    `https://music.163.com/api/cloudsearch/pc?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`,
-    `https://music.163.com/api/search/get/web?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`
-  ];
-
   try {
     var playlists = [];
-    for (var uIdx = 0; uIdx < urls.length; uIdx++) {
-      var data = await neteaseFetch(urls[uIdx]);
-      playlists = extractPlaylists(data);
-      if (playlists.length > 0) break;
+    if (plSource === 'vkeys_tencent') {
+      var qqRes = await fetch(`https://api.vkeys.cn/music/tencent/search/playlist?keyword=${encodeURIComponent(query)}&page=${page}&limit=20`);
+      if (qqRes.ok) {
+        var qqData = await qqRes.json();
+        if (qqData && (qqData.code === 0 || qqData.code === 200) && qqData.data && Array.isArray(qqData.data.list)) {
+          playlists = qqData.data.list.map(item => ({
+            id: String(item.dissID),
+            name: item.dissName,
+            coverImgUrl: item.dissPic,
+            trackCount: item.songCount || 0,
+            playCount: item.listenum || 0,
+            creator: { nickname: item.creator || 'QQ音乐精选' },
+            source: 'vkeys_tencent'
+          }));
+        }
+      }
+    } else {
+      var offset = (page - 1) * 20;
+      var extractPlaylists = function (d) {
+        if (!d) return [];
+        if (d.result && Array.isArray(d.result.playlists)) return d.result.playlists;
+        if (Array.isArray(d.playlists)) return d.playlists;
+        if (d.data && Array.isArray(d.data.playlists)) return d.data.playlists;
+        return [];
+      };
+
+      var urls = [
+        `https://interface.music.163.com/api/search/get/web?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`,
+        `https://music.163.com/api/cloudsearch/pc?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`,
+        `https://music.163.com/api/search/get/web?s=${encodeURIComponent(query)}&type=1000&offset=${offset}&limit=20`
+      ];
+
+      for (var uIdx = 0; uIdx < urls.length; uIdx++) {
+        var data = await neteaseFetch(urls[uIdx]);
+        var rawPls = extractPlaylists(data);
+        if (rawPls.length > 0) {
+          playlists = rawPls.map(p => Object.assign({}, p, { source: 'netease' }));
+          break;
+        }
+      }
     }
 
     currentSearchPlaylists = playlists;
@@ -1702,15 +1796,31 @@ async function performPlaylistSearch(query, page) {
   } catch (err) {
     console.error("[FIRE] Playlist search failed:", err);
     if (container) {
+      var switchBtnHtml = (plSource === 'netease')
+        ? `<div style="margin-top:10px;"><button id="fire-switch-to-qq-btn" class="fire-btn" style="font-size:11px;padding:4px 10px;"><i class="fa-solid fa-arrows-rotate"></i> 一键切换至 QQ歌单 (跨域免代理)</button></div>`
+        : '';
       container.innerHTML = `
         <div style="text-align:center;padding:24px 12px;font-size:12px;color:var(--fire-em);">
           <i class="fa-solid fa-triangle-exclamation" style="font-size:24px;margin-bottom:8px;display:block;"></i>
-          搜索歌单失败<br>
+          搜索${sourceName}歌单失败<br>
           <div style="font-size:11px;opacity:0.85;margin-top:6px;background:rgba(255,100,100,0.1);padding:6px 10px;border-radius:4px;display:inline-block;max-width:90%;">
             排查信息: ${escapeHtml(lastNeteaseDiag.error || err.message || '网络请求超时')}
           </div>
+          ${switchBtnHtml}
         </div>
       `;
+      var switchBtn = doc.getElementById('fire-switch-to-qq-btn');
+      if (switchBtn) {
+        switchBtn.addEventListener('click', function() {
+          state.settings.playlistSearchSource = 'vkeys_tencent';
+          saveState();
+          var qqTabBtn = doc.getElementById('fire-pl-source-qq');
+          var neTabBtn = doc.getElementById('fire-pl-source-netease');
+          if (qqTabBtn) qqTabBtn.classList.add('active');
+          if (neTabBtn) neTabBtn.classList.remove('active');
+          performPlaylistSearch(query, 1);
+        });
+      }
     }
   }
 }
@@ -1720,17 +1830,37 @@ function renderPlaylistSearchResults(playlists) {
   var container = doc.getElementById('fire-search-results');
   if (!container) return;
 
+  var plSource = state.settings.playlistSearchSource || 'vkeys_tencent';
+
   if (!playlists || playlists.length === 0) {
+    var switchBtnHtml = (plSource === 'netease')
+      ? `<div style="margin-top:10px;"><button id="fire-switch-to-qq-btn-empty" class="fire-btn" style="font-size:11px;padding:4px 10px;"><i class="fa-solid fa-arrows-rotate"></i> 切换至 QQ歌单搜索 (跨域免代理)</button></div>`
+      : '';
     var diagHtml = lastNeteaseDiag.error
       ? `<div style="font-size:11px;color:var(--fire-em);margin-top:8px;background:rgba(255,100,100,0.1);padding:6px 10px;border-radius:4px;display:inline-block;max-width:90%;">排查信息: ${escapeHtml(lastNeteaseDiag.error)}</div>`
-      : `<div style="font-size:11px;opacity:0.6;margin-top:8px;">(接口状态: ${lastNeteaseDiag.stProxyStatus || '无响应'}，网易云无匹配结果)</div>`;
+      : `<div style="font-size:11px;opacity:0.6;margin-top:8px;">(接口状态: ${lastNeteaseDiag.stProxyStatus || '无响应'}，暂无匹配结果)</div>`;
     container.innerHTML = `
       <div style="text-align:center;padding:30px 10px;font-size:12px;">
         <i class="fa-solid fa-circle-question" style="font-size:24px;margin-bottom:8px;display:block;opacity:0.5;"></i>
         未找到相关歌单，换个关键词试试吧<br>
         ${diagHtml}
+        ${switchBtnHtml}
       </div>
     `;
+    var switchBtn = doc.getElementById('fire-switch-to-qq-btn-empty');
+    if (switchBtn) {
+      switchBtn.addEventListener('click', function() {
+        state.settings.playlistSearchSource = 'vkeys_tencent';
+        saveState();
+        var qqTabBtn = doc.getElementById('fire-pl-source-qq');
+        var neTabBtn = doc.getElementById('fire-pl-source-netease');
+        if (qqTabBtn) qqTabBtn.classList.add('active');
+        if (neTabBtn) neTabBtn.classList.remove('active');
+        if (currentSearchQuery) {
+          performPlaylistSearch(currentSearchQuery, 1);
+        }
+      });
+    }
     return;
   }
 
@@ -1740,6 +1870,8 @@ function renderPlaylistSearchResults(playlists) {
         var cover = pl.coverImgUrl || DEFAULT_COVER;
         var playCountStr = formatPlayCount(pl.playCount);
         var creatorName = pl.creator ? pl.creator.nickname : '未知创建者';
+        var sourceText = (pl.source === 'vkeys_tencent' || pl.source === 'tencent') ? 'QQ歌单' : '网易云';
+        var sourceCls = (pl.source === 'vkeys_tencent' || pl.source === 'tencent') ? 'vkeys' : 'netease';
         return `
           <div class="fire-playlist-card" data-idx="${idx}">
             <div class="fire-playlist-card-cover-wrap">
@@ -1753,6 +1885,7 @@ function renderPlaylistSearchResults(playlists) {
               </div>
               <div class="fire-playlist-card-meta">
                 <span><i class="fa-solid fa-music" style="font-size:9px;"></i> ${pl.trackCount || 0} 首歌曲</span>
+                <span class="fire-source-badge ${sourceCls}" style="margin-left:6px;font-size:10px;padding:1px 5px;border-radius:3px;">${sourceText}</span>
               </div>
             </div>
             <div class="fire-playlist-card-actions">
@@ -1774,7 +1907,7 @@ function renderPlaylistSearchResults(playlists) {
       var idx = parseInt(this.getAttribute('data-idx'), 10);
       var pl = playlists[idx];
       if (pl) {
-        openPlaylistPreview(pl.id, pl.name, pl.coverImgUrl, pl.creator ? pl.creator.nickname : '');
+        openPlaylistPreview(pl.id, pl.name, pl.coverImgUrl, pl.creator ? pl.creator.nickname : '', pl.source);
       }
     });
   });
@@ -1785,7 +1918,7 @@ function renderPlaylistSearchResults(playlists) {
       var idx = parseInt(this.getAttribute('data-idx'), 10);
       var pl = playlists[idx];
       if (pl) {
-        openPlaylistPreview(pl.id, pl.name, pl.coverImgUrl, pl.creator ? pl.creator.nickname : '');
+        openPlaylistPreview(pl.id, pl.name, pl.coverImgUrl, pl.creator ? pl.creator.nickname : '', pl.source);
       }
     });
   });
@@ -2335,10 +2468,11 @@ function createUI() {
           
           <!-- Part 1: Multi-platform Playlist Import -->
           <div style="margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px;">
-            <span style="font-size: 11px; opacity: 0.8;">导入在线歌单 (网易云/酷我/酷狗UID)</span>
+            <span style="font-size: 11px; opacity: 0.8;">导入在线歌单 (QQ/网易云/酷我/酷狗UID)</span>
             <div style="display: flex; gap: 6px;">
               <select id="fire-import-source-select" class="fire-select" style="height: 28px; padding: 2px 6px; font-size: 12px; width: 95px; flex-shrink: 0;">
                 <option value="auto">自动识别</option>
+                <option value="tencent">QQ音乐</option>
                 <option value="netease">网易云</option>
                 <option value="kuwo">酷我音乐</option>
                 <option value="kugou">酷狗 (UID)</option>
@@ -2573,14 +2707,18 @@ function createUI() {
               <button type="button" class="fire-search-mode-btn ${state.settings.searchMode === 'playlist' ? '' : 'active'}" id="fire-search-mode-song">搜单曲</button>
               <button type="button" class="fire-search-mode-btn ${state.settings.searchMode === 'playlist' ? 'active' : ''}" id="fire-search-mode-playlist">搜歌单</button>
             </div>
+            <div class="fire-playlist-source-bar" id="fire-playlist-source-bar" style="display: ${state.settings.searchMode === 'playlist' ? 'flex' : 'none'};">
+              <button type="button" class="fire-pl-source-btn ${state.settings.playlistSearchSource === 'vkeys_tencent' ? 'active' : ''}" id="fire-pl-source-qq" data-source="vkeys_tencent">QQ歌单 (手机/推荐)</button>
+              <button type="button" class="fire-pl-source-btn ${state.settings.playlistSearchSource === 'netease' ? 'active' : ''}" id="fire-pl-source-netease" data-source="netease">网易云歌单 (电脑Web)</button>
+            </div>
             <form id="fire-search-form" class="fire-search-form" action="javascript:void(0);">
-              <input type="search" id="fire-search-input" class="fire-input" enterkeyhint="search" placeholder="${state.settings.searchMode === 'playlist' ? '输入关键词搜索网易云歌单...' : '输入歌名或歌手搜索...'}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+              <input type="search" id="fire-search-input" class="fire-input" enterkeyhint="search" placeholder="${state.settings.searchMode === 'playlist' ? (state.settings.playlistSearchSource === 'netease' ? '输入关键词搜索网易云歌单...' : '输入关键词搜索QQ音乐歌单...') : '输入歌名或歌手搜索...'}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
               <button type="submit" id="fire-search-btn" class="fire-btn">搜索</button>
             </form>
             <div id="fire-search-source-filter" class="fire-source-filter-bar" style="display: ${state.settings.searchMode === 'playlist' ? 'none' : 'flex'};"></div>
             <div class="fire-music-list fire-scroll" id="fire-search-results">
               <div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">
-                ${state.settings.searchMode === 'playlist' ? '在上方输入关键词搜索网易云歌单' : '在上方输入关键词搜索歌曲'}
+                ${state.settings.searchMode === 'playlist' ? (state.settings.playlistSearchSource === 'netease' ? '在上方输入关键词搜索网易云歌单' : '在上方输入关键词搜索QQ音乐歌单') : '在上方输入关键词搜索歌曲'}
               </div>
             </div>
             <div class="fire-pagination" id="fire-search-pagination" style="display:none;">
@@ -3137,53 +3275,66 @@ function bindUIEvents() {
       if (diagResult) {
         diagResult.style.display = 'block';
         diagResult.style.color = 'var(--fire-text)';
-        diagResult.textContent = '正在发起测试 (检测 CSRF Token 与网易云歌单中转)...';
+        diagResult.textContent = '正在检测网络与接口连接 (QQ音乐跨域直连 / 网易云中转)...';
       }
       try {
-        var t1 = Date.now();
-        var extractCount = function (d) {
-          if (!d) return 0;
-          if (d.result && Array.isArray(d.result.playlists)) return d.result.playlists.length;
-          if (Array.isArray(d.playlists)) return d.playlists.length;
-          if (d.data && Array.isArray(d.data.playlists)) return d.data.playlists.length;
-          return 0;
-        };
+        var results = [];
 
-        var testUrl = 'https://interface.music.163.com/api/search/get/web?s=' + encodeURIComponent('周杰伦') + '&type=1000&offset=0&limit=3';
-        var data = await neteaseFetch(testUrl);
-        var count = extractCount(data);
-
-        if (count === 0) {
-          var fbData = await neteaseFetch('https://music.163.com/api/cloudsearch/pc?s=' + encodeURIComponent('周杰伦') + '&type=1000&offset=0&limit=3');
-          var fbCount = extractCount(fbData);
-          if (fbCount > 0) {
-            data = fbData;
-            count = fbCount;
+        // 1. Test QQ Music API (Direct CORS)
+        var tQQ = Date.now();
+        try {
+          var qqRes = await fetch('https://api.vkeys.cn/music/tencent/search/playlist?keyword=%E5%91%A8%E6%9D%B0%E4%BC%A6&page=1&limit=3');
+          var qqCost = Date.now() - tQQ;
+          if (qqRes.ok) {
+            var qqData = await qqRes.json();
+            var qqCount = (qqData && qqData.data && Array.isArray(qqData.data.list)) ? qqData.data.list.length : 0;
+            if (qqCount > 0) {
+              results.push(`✅ QQ歌单(手机推荐): 正常 (${qqCost}ms, 获取${qqCount}条)`);
+            } else {
+              results.push(`⚠️ QQ歌单: 响应正常但无数据`);
+            }
+          } else {
+            results.push(`❌ QQ歌单: HTTP ${qqRes.status}`);
           }
+        } catch (eQQ) {
+          results.push(`❌ QQ歌单: ${eQQ.message}`);
         }
-        var cost = Date.now() - t1;
 
-        if (count > 0) {
-          var successMsg = `✅ 接口通畅！耗时 ${cost}ms，成功拉取到 ${count} 条歌单测试数据`;
-          if (diagResult) {
-            diagResult.style.color = '#4ade80';
-            diagResult.textContent = successMsg;
+        // 2. Test NetEase API (Node Proxy / Direct)
+        var tNE = Date.now();
+        try {
+          var extractCount = function (d) {
+            if (!d) return 0;
+            if (d.result && Array.isArray(d.result.playlists)) return d.result.playlists.length;
+            if (Array.isArray(d.playlists)) return d.playlists.length;
+            if (d.data && Array.isArray(d.data.playlists)) return d.data.playlists.length;
+            return 0;
+          };
+          var testUrl = 'https://interface.music.163.com/api/search/get/web?s=' + encodeURIComponent('周杰伦') + '&type=1000&offset=0&limit=3';
+          var neData = await neteaseFetch(testUrl);
+          var neCount = extractCount(neData);
+          var neCost = Date.now() - tNE;
+          if (neCount > 0) {
+            results.push(`✅ 网易云(电脑Web): 正常 (${neCost}ms, 获取${neCount}条)`);
+          } else {
+            var isTauri = typeof window !== 'undefined' && (window.__TAURITAVERN__ || window.__TAURI__);
+            var neDetail = isTauri ? 'Tauri无Node代理' : (lastNeteaseDiag.error || '无数据');
+            results.push(`⚠️ 网易云: 受限 (${neDetail})`);
           }
-          showToast(successMsg);
-          addLog(successMsg);
-        } else {
-          var preview = lastNeteaseDiag.rawPreview ? ` [响应: ${lastNeteaseDiag.rawPreview.slice(0, 45)}]` : '';
-          var codeInfo = (lastNeteaseDiag.code !== null && lastNeteaseDiag.code !== undefined) ? `，网易码: ${lastNeteaseDiag.code}` : '';
-          var failMsg = `⚠️ 接口无数据。状态码: ${lastNeteaseDiag.stProxyStatus || '无响应'}${codeInfo}，详情: ${lastNeteaseDiag.error || '未解析出有效歌单'}${preview}`;
-          if (diagResult) {
-            diagResult.style.color = 'var(--fire-em)';
-            diagResult.textContent = failMsg;
-          }
-          showToast(failMsg);
-          addLog(failMsg);
+        } catch (eNE) {
+          results.push(`❌ 网易云: ${eNE.message}`);
         }
+
+        var fullMsg = results.join('\n');
+        if (diagResult) {
+          diagResult.style.whiteSpace = 'pre-line';
+          diagResult.style.color = results.some(r => r.startsWith('✅')) ? '#4ade80' : 'var(--fire-em)';
+          diagResult.textContent = fullMsg;
+        }
+        showToast('诊断完成，请查看测试结果');
+        addLog(fullMsg);
       } catch (err) {
-        var errMsg = `❌ 测试失败: ${err.message}`;
+        var errMsg = `❌ 测试异常: ${err.message}`;
         if (diagResult) {
           diagResult.style.color = 'var(--fire-em)';
           diagResult.textContent = errMsg;
@@ -3739,8 +3890,48 @@ function bindUIEvents() {
   var btnModeSong = doc.getElementById('fire-search-mode-song');
   var btnModePlaylist = doc.getElementById('fire-search-mode-playlist');
   var filterBar = doc.getElementById('fire-search-source-filter');
+  var playlistSourceBar = doc.getElementById('fire-playlist-source-bar');
+  var plSourceQQ = doc.getElementById('fire-pl-source-qq');
+  var plSourceNetease = doc.getElementById('fire-pl-source-netease');
   var searchResultsContainer = doc.getElementById('fire-search-results');
   var paginationContainer = doc.getElementById('fire-search-pagination');
+
+  function updatePlaylistSearchUI() {
+    var plSource = state.settings.playlistSearchSource || 'vkeys_tencent';
+    if (plSourceQQ) plSourceQQ.classList.toggle('active', plSource === 'vkeys_tencent');
+    if (plSourceNetease) plSourceNetease.classList.toggle('active', plSource === 'netease');
+    if (searchInput) {
+      searchInput.placeholder = plSource === 'netease' ? '输入关键词搜索网易云歌单...' : '输入关键词搜索QQ音乐歌单...';
+    }
+  }
+
+  if (plSourceQQ) {
+    plSourceQQ.addEventListener('click', function() {
+      state.settings.playlistSearchSource = 'vkeys_tencent';
+      saveState();
+      updatePlaylistSearchUI();
+      var q = searchInput ? (searchInput.value || '').trim() : '';
+      if (q) {
+        performPlaylistSearch(q, 1);
+      } else if (searchResultsContainer) {
+        searchResultsContainer.innerHTML = '<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">在上方输入关键词搜索QQ音乐歌单</div>';
+      }
+    });
+  }
+
+  if (plSourceNetease) {
+    plSourceNetease.addEventListener('click', function() {
+      state.settings.playlistSearchSource = 'netease';
+      saveState();
+      updatePlaylistSearchUI();
+      var q = searchInput ? (searchInput.value || '').trim() : '';
+      if (q) {
+        performPlaylistSearch(q, 1);
+      } else if (searchResultsContainer) {
+        searchResultsContainer.innerHTML = '<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">在上方输入关键词搜索网易云歌单</div>';
+      }
+    });
+  }
 
   if (btnModeSong && btnModePlaylist) {
     btnModeSong.addEventListener('click', function() {
@@ -3748,6 +3939,7 @@ function bindUIEvents() {
       saveState();
       btnModeSong.classList.add('active');
       btnModePlaylist.classList.remove('active');
+      if (playlistSourceBar) playlistSourceBar.style.display = 'none';
       if (searchInput) searchInput.placeholder = '输入歌名或歌手搜索...';
       if (filterBar) filterBar.style.display = 'flex';
       if (paginationContainer) paginationContainer.style.display = (currentSearchSongs.length > 0) ? 'flex' : 'none';
@@ -3763,13 +3955,15 @@ function bindUIEvents() {
       saveState();
       btnModePlaylist.classList.add('active');
       btnModeSong.classList.remove('active');
-      if (searchInput) searchInput.placeholder = '输入关键词搜索网易云歌单...';
+      if (playlistSourceBar) playlistSourceBar.style.display = 'flex';
+      updatePlaylistSearchUI();
       if (filterBar) filterBar.style.display = 'none';
       if (paginationContainer) paginationContainer.style.display = (currentSearchPlaylists.length > 0) ? 'flex' : 'none';
       if (currentSearchPlaylists.length > 0) {
         renderPlaylistSearchResults(currentSearchPlaylists);
       } else if (searchResultsContainer) {
-        searchResultsContainer.innerHTML = '<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">在上方输入关键词搜索网易云歌单</div>';
+        var hint = (state.settings.playlistSearchSource === 'netease') ? '在上方输入关键词搜索网易云歌单' : '在上方输入关键词搜索QQ音乐歌单';
+        searchResultsContainer.innerHTML = `<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">${hint}</div>`;
       }
     });
   }
@@ -3797,7 +3991,7 @@ function bindUIEvents() {
           performSearch(val, 1);
         }
       } else {
-        showToast(state.settings.searchMode === 'playlist' ? "请输入网易云歌单关键词" : "请输入歌曲或歌手名称");
+        showToast(state.settings.searchMode === 'playlist' ? "请输入歌单关键词" : "请输入歌曲或歌手名称");
       }
     };
 
@@ -5860,8 +6054,8 @@ async function importPlaylist(inputStr) {
     }
   }
 
-  if (source === 'tencent' || source === 'migu') {
-    showToast("QQ/咪咕歌单由于平台加密机制限制，暂不支持在线链接直接导入，建议导入网易云/酷我歌单");
+  if (source === 'migu') {
+    showToast("咪咕歌单由于平台加密机制限制，暂不支持在线链接直接导入，建议导入QQ音乐/网易云/酷我歌单");
     return;
   }
 
@@ -5875,6 +6069,17 @@ async function importPlaylist(inputStr) {
     }
     if (!playlistId) {
       showToast("未在链接中检测到酷狗数字 UID。请使用带有 uid= 的链接或纯数字 UID(如 569471137)");
+      return;
+    }
+  } else if (source === 'tencent') {
+    var qqMatch = trimmed.match(/[?&](?:id|dissid)=([0-9]+)/i) || trimmed.match(/\/(?:playlist|songlist|playsquare)\/([0-9]+)/i);
+    if (qqMatch) {
+      playlistId = qqMatch[1];
+    } else if (/^[0-9]+$/.test(trimmed)) {
+      playlistId = trimmed;
+    }
+    if (!playlistId) {
+      showToast("未在链接中检测到QQ音乐歌单ID。请使用包含 id=/dissid= 的链接或纯数字歌单ID");
       return;
     }
   } else {
@@ -5900,6 +6105,7 @@ async function importPlaylist(inputStr) {
 
   var sourceNames = {
     'netease': '网易云',
+    'tencent': 'QQ音乐',
     'kuwo': '酷我音乐',
     'kugou': '酷狗音乐'
   };
@@ -5910,8 +6116,40 @@ async function importPlaylist(inputStr) {
     var tracks = [];
     var playlistName = source === 'kugou' ? `酷狗收藏歌单_${playlistId}` : `${sName}导入歌单_${playlistId}`;
 
-    // Primary Attempt: GD Studio API (NetEase/KuWo)
-    if (source !== 'kugou') {
+    // QQ Music: fetch via vkeys dissInfo
+    if (source === 'tencent') {
+      try {
+        var qqRes = await fetch(`https://api.vkeys.cn/v2/music/tencent/dissInfo?id=${playlistId}`);
+        if (qqRes.ok) {
+          var qqData = await qqRes.json();
+          if (qqData && qqData.code === 200 && qqData.data && Array.isArray(qqData.data.list)) {
+            if (qqData.data.info && qqData.data.info.title) {
+              playlistName = qqData.data.info.title.trim();
+            }
+            tracks = qqData.data.list.map(item => {
+              var rawArtist = (Array.isArray(item.singer_list) && item.singer_list.length > 0)
+                ? item.singer_list.map(s => s.name)
+                : (item.singer ? item.singer.replace(/\|+$/, '').split('|').filter(Boolean) : ['未知歌手']);
+              return {
+                id: String(item.id),
+                name: item.song || item.title || '未知歌曲',
+                artist: rawArtist,
+                album: item.album || '',
+                pic_id: item.cover || '',
+                url_id: item.id,
+                lyric_id: item.id,
+                source: 'vkeys_tencent',
+                coverUrl: item.cover || '',
+                _vkeys_mid: item.mid || ''
+              };
+            });
+          }
+        }
+      } catch (eQQ) {
+        console.warn('[FIRE] QQ playlist import failed:', eQQ);
+      }
+    } else if (source !== 'kugou') {
+      // Primary Attempt: GD Studio API (NetEase/KuWo)
       try {
         var gdData = await fetchWithRetry(`https://music-api.gdstudio.xyz/api.php?types=playlist&source=${source}&id=${playlistId}`, {}, 2, 800);
         if (gdData && (!gdData.detail || !gdData.detail.includes('not supported'))) {
@@ -5961,8 +6199,10 @@ async function importPlaylist(inputStr) {
       var artistName = '未知歌手';
       if (track.ar && Array.isArray(track.ar)) {
         artistName = track.ar.map(a => a.name).join(' / ');
+      } else if (Array.isArray(track.artist)) {
+        artistName = track.artist.join(' / ');
       } else if (track.artist) {
-        artistName = Array.isArray(track.artist) ? track.artist.join(' / ') : track.artist;
+        artistName = track.artist;
       } else if (track.singer && Array.isArray(track.singer)) {
         artistName = track.singer.map(s => s.name || s).join(' / ');
       }
@@ -5982,7 +6222,7 @@ async function importPlaylist(inputStr) {
         album: albumName,
         pic_id: picId,
         coverUrl: coverUrl,
-        source: source
+        source: track.source || (source === 'tencent' ? 'vkeys_tencent' : source)
       };
     });
 

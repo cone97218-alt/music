@@ -2188,6 +2188,59 @@
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
 }
 
+/* ─── Playlist Source Selector (QQ vs NetEase) ───────────────────────────── */
+
+.fire-playlist-source-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 6px;
+    background: rgba(128, 128, 128, 0.05);
+    padding: 2px 3px;
+    border-radius: 6px;
+    border: 1px dashed var(--fire-border, rgba(128, 128, 128, 0.18));
+}
+
+.fire-pl-source-btn {
+    flex: 1;
+    padding: 3px 6px;
+    font-size: 10.5px;
+    border-radius: 4px;
+    background: transparent;
+    border: none;
+    color: var(--fire-text, #fff);
+    opacity: 0.65;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.15s, opacity 0.15s, color 0.15s;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.fire-pl-source-btn:hover {
+    opacity: 0.95;
+    background: rgba(128, 128, 128, 0.12);
+}
+
+.fire-pl-source-btn.active {
+    background: var(--fire-accent, #a855f7);
+    color: #ffffff;
+    opacity: 1;
+    font-weight: 600;
+}
+
+.fire-source-badge.vkeys {
+    background: rgba(30, 204, 148, 0.18);
+    color: #2dd4bf;
+    border: 1px solid rgba(45, 212, 191, 0.3);
+}
+
+.fire-source-badge.netease {
+    background: rgba(239, 68, 68, 0.18);
+    color: #f87171;
+    border: 1px solid rgba(248, 113, 113, 0.3);
+}
+
 /* ─── Playlist Card Styles ─────────────────────────────────────────────────── */
 
 .fire-playlist-list {
