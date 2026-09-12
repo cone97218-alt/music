@@ -695,7 +695,7 @@ async function playSong(song) {
       finalBr = 'local';
       size = 0;
     } else if (song.source === 'vkeys_tencent') {
-      // vkeys.cn tencent URL resolution
+      // vkeys.cn tencent URL resolution with multi-tiered fallback
       var vkeysCacheKey = `vkeys_tencent_${song.id}`;
       var vkeysCached = getCache('url', vkeysCacheKey);
       if (vkeysCached) {
@@ -703,17 +703,89 @@ async function playSong(song) {
         finalBr = vkeysCached.br;
         size = vkeysCached.size;
       } else {
+        // Tier 1: Stable v2 geturl (high quality flac/320k, higher success rate)
         try {
-          var vkeysRes = await fetch(`https://api.vkeys.cn/music/tencent/song/link?id=${song.id}`);
-          var vkeysData = await vkeysRes.json();
-          if (vkeysData.code === 0 && vkeysData.data && vkeysData.data.url) {
-            playUrl = vkeysData.data.url;
-            finalBr = vkeysData.data.kbps || '320';
-            size = 0;
-            setCache('url', vkeysCacheKey, { url: playUrl, br: finalBr, size: 0 }, 15 * 60 * 1000);
+          var v2Res = await fetch(`https://api.vkeys.cn/v2/music/tencent/geturl?id=${song.id}`);
+          if (v2Res.ok) {
+            var v2Data = await v2Res.json();
+            if (v2Data && v2Data.code === 200 && v2Data.data && v2Data.data.url) {
+              playUrl = v2Data.data.url;
+              finalBr = v2Data.data.kbps || '320';
+              size = 0;
+              setCache('url', vkeysCacheKey, { url: playUrl, br: finalBr, size: 0 }, 15 * 60 * 1000);
+            }
           }
-        } catch (err) {
-          console.warn('[FIRE] vkeys_tencent URL fetch failed:', err);
+        } catch (e1) {
+          console.warn('[FIRE] vkeys v2 geturl failed:', e1);
+        }
+
+        // Tier 2: v3 song/link (fallback)
+        if (!playUrl) {
+          try {
+            var vkeysRes = await fetch(`https://api.vkeys.cn/music/tencent/song/link?id=${song.id}`);
+            if (vkeysRes.ok) {
+              var vkeysData = await vkeysRes.json();
+              if (vkeysData && vkeysData.code === 0 && vkeysData.data && vkeysData.data.url) {
+                playUrl = vkeysData.data.url;
+                finalBr = vkeysData.data.kbps || '320';
+                size = 0;
+                setCache('url', vkeysCacheKey, { url: playUrl, br: finalBr, size: 0 }, 15 * 60 * 1000);
+              }
+            }
+          } catch (err) {
+            console.warn('[FIRE] vkeys v3 link fetch failed:', err);
+          }
+        }
+
+        // Tier 3: Cross-match on GDStudio (NetEase / KuWo) for songs blocked by cookie rate limits
+        if (!playUrl && song.name) {
+          try {
+            var cleanTitle = song.name.replace(/\(.*?\)|（.*?）/g, '').trim();
+            var artistStr = Array.isArray(song.artist) ? song.artist[0] : (song.artist || '');
+            var queryStr = encodeURIComponent((cleanTitle + ' ' + artistStr).trim() || song.name);
+
+            // 1. Try NetEase cross-match
+            var crossRes = await fetch(`https://music-api.gdstudio.xyz/api.php?types=search&source=netease&name=${queryStr}&count=3`);
+            if (crossRes.ok) {
+              var crossList = await crossRes.json();
+              if (Array.isArray(crossList) && crossList.length > 0) {
+                var matchId = crossList[0].id;
+                var matchUrlRes = await fetch(`https://music-api.gdstudio.xyz/api.php?types=url&source=netease&id=${matchId}&br=320`);
+                if (matchUrlRes.ok) {
+                  var matchUrlData = await matchUrlRes.json();
+                  if (matchUrlData && matchUrlData.url) {
+                    playUrl = matchUrlData.url;
+                    finalBr = matchUrlData.br || '320';
+                    size = matchUrlData.size || 0;
+                    setCache('url', vkeysCacheKey, { url: playUrl, br: finalBr, size: size }, 15 * 60 * 1000);
+                  }
+                }
+              }
+            }
+
+            // 2. Try KuWo cross-match if NetEase had no playable stream
+            if (!playUrl) {
+              var kuwoRes = await fetch(`https://music-api.gdstudio.xyz/api.php?types=search&source=kuwo&name=${queryStr}&count=3`);
+              if (kuwoRes.ok) {
+                var kuwoList = await kuwoRes.json();
+                if (Array.isArray(kuwoList) && kuwoList.length > 0) {
+                  var kId = kuwoList[0].id;
+                  var kUrlRes = await fetch(`https://music-api.gdstudio.xyz/api.php?types=url&source=kuwo&id=${kId}&br=320`);
+                  if (kUrlRes.ok) {
+                    var kUrlData = await kUrlRes.json();
+                    if (kUrlData && kUrlData.url) {
+                      playUrl = kUrlData.url;
+                      finalBr = kUrlData.br || '320';
+                      size = kUrlData.size || 0;
+                      setCache('url', vkeysCacheKey, { url: playUrl, br: finalBr, size: size }, 15 * 60 * 1000);
+                    }
+                  }
+                }
+              }
+            }
+          } catch (eCross) {
+            console.warn('[FIRE] Cross-match audio resolution failed:', eCross);
+          }
         }
       }
     } else {
@@ -773,9 +845,9 @@ async function playSong(song) {
       throw new Error("所有音质均无法获取音频直链");
     }
 
-    // Force HTTPS if parent runs on HTTPS to bypass mixed-content blocker
-    if (window.location.protocol === 'https:' && playUrl.startsWith('http://')) {
-      playUrl = playUrl.replace('http://', 'https://');
+    // Force HTTPS if parent runs on HTTPS or for known CDNs to bypass mixed-content blocker
+    if (playUrl && playUrl.startsWith('http://') && (window.location.protocol === 'https:' || playUrl.includes('qqmusic.qq.com') || playUrl.includes('126.net'))) {
+      playUrl = playUrl.replace(/^http:\/\//i, 'https://');
     }
 
     audio.src = playUrl;
@@ -5316,7 +5388,7 @@ function renderSearchResults() {
       'migu': '<span class="fire-source-badge migu">咪咕</span>',
       'joox': '<span class="fire-source-badge joox">JOOX</span>',
       'bilibili': '<span class="fire-source-badge bilibili">B站</span>',
-      'vkeys_tencent': '<span class="fire-source-badge vkeys">落月QQ</span>'
+      'vkeys_tencent': '<span class="fire-source-badge tencent">QQ</span>'
     };
     var badge = sourceBadges[song.source] || '<span class="fire-source-badge">其它</span>';
 
@@ -5443,7 +5515,11 @@ function renderPlaylistSongs() {
     var sourceBadges = {
       'netease': '<span class="fire-source-badge netease">网易</span>',
       'tencent': '<span class="fire-source-badge tencent">QQ</span>',
+      'vkeys_tencent': '<span class="fire-source-badge tencent">QQ</span>',
       'kuwo': '<span class="fire-source-badge kuwo">酷我</span>',
+      'kugou': '<span class="fire-source-badge kugou">酷狗</span>',
+      'migu': '<span class="fire-source-badge migu">咪咕</span>',
+      'joox': '<span class="fire-source-badge joox">JOOX</span>',
       'bilibili': '<span class="fire-source-badge bilibili">B站</span>',
       'local': '<span class="fire-source-badge local">本地</span>'
     };
