@@ -86,6 +86,7 @@ var state = {
     enableDiscoverTab: true,
     searchMode: 'song',
     playlistSearchSource: (typeof window !== 'undefined' && (window.__TAURITAVERN__ || window.__TAURI__)) ? 'vkeys_tencent' : 'vkeys_tencent',
+    discoverSource: (typeof window !== 'undefined' && (window.__TAURITAVERN__ || window.__TAURI__)) ? 'vkeys_tencent' : 'vkeys_tencent',
     discoverSubtab: 'recommend',
     discoverCategory: '全部',
     enableSimiSongs: true,
@@ -211,6 +212,7 @@ var currentSearchPlaylistPage = 1;
 var currentPlaylistPreviewTracks = [];
 var currentPreviewPlaylistInfo = null;
 var _recommendCache = {};
+var _recommendQQCache = {};
 var DISCOVER_CATEGORIES = ['全部', '流行', 'ACG', '古风', '治愈', '轻音乐', '电子', '摇滚', '欧美', '粤语'];
 var lastSearchQueryState = null;
 var currentSearchPage = 1;
@@ -339,6 +341,9 @@ function loadState() {
       }
       if (!state.settings.discoverCategory) {
         state.settings.discoverCategory = '全部';
+      }
+      if (!state.settings.discoverSource) {
+        state.settings.discoverSource = (typeof window !== 'undefined' && (window.__TAURITAVERN__ || window.__TAURI__)) ? 'vkeys_tencent' : 'vkeys_tencent';
       }
       // Migrate old combined displayMode (e.g. wand-modal, qr-top, etc.)
       var oldMode = state.settings.displayMode;
@@ -2890,7 +2895,13 @@ function createUI() {
               </button>
             </div>
             <div class="fire-discover-header">
-              <span class="fire-discover-title" id="fire-discover-title">网易云精选歌单</span>
+              <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                <span class="fire-discover-title" id="fire-discover-title">${state.settings.discoverSource === 'vkeys_tencent' ? 'QQ音乐精选歌单' : '网易云精选歌单'}</span>
+                <div class="fire-playlist-source-bar" id="fire-discover-source-bar" style="margin-bottom:0;display:${state.settings.discoverSubtab === 'charts' ? 'none' : 'flex'};">
+                  <button type="button" class="fire-pl-source-btn ${state.settings.discoverSource === 'vkeys_tencent' ? 'active' : ''}" id="fire-discover-source-qq" data-source="vkeys_tencent">QQ音乐</button>
+                  <button type="button" class="fire-pl-source-btn ${state.settings.discoverSource === 'netease' ? 'active' : ''}" id="fire-discover-source-netease" data-source="netease">网易云</button>
+                </div>
+              </div>
               <button id="fire-discover-refresh-btn" class="fire-btn fire-btn-normal" style="padding:4px 10px;font-size:11px;" title="重新加载">刷新</button>
             </div>
             <div id="fire-discover-cat-bar" class="fire-discover-cat-bar" style="display: ${state.settings.discoverSubtab === 'charts' && state.settings.enableChartsTab !== false ? 'none' : 'flex'};"></div>
@@ -4633,6 +4644,8 @@ function renderPlaylistCardsIntoList(playlists, containerId) {
         var cover = pl.coverImgUrl || DEFAULT_COVER;
         var playCountStr = formatPlayCount(pl.playCount);
         var creatorName = pl.creator ? pl.creator.nickname : '官方精选';
+        var sourceText = (pl.source === 'vkeys_tencent' || pl.source === 'tencent') ? 'QQ歌单' : '网易云';
+        var sourceCls = (pl.source === 'vkeys_tencent' || pl.source === 'tencent') ? 'vkeys' : 'netease';
         return `
           <div class="fire-playlist-card" data-idx="${idx}">
             <div class="fire-playlist-card-cover-wrap">
@@ -4646,6 +4659,7 @@ function renderPlaylistCardsIntoList(playlists, containerId) {
               </div>
               <div class="fire-playlist-card-meta">
                 <span><i class="fa-solid fa-music" style="font-size:9px;"></i> ${pl.trackCount || 0} 首歌曲</span>
+                <span class="fire-source-badge ${sourceCls}" style="margin-left:6px;font-size:10px;padding:1px 5px;border-radius:3px;">${sourceText}</span>
               </div>
             </div>
             <div class="fire-playlist-card-actions">
@@ -4667,7 +4681,7 @@ function renderPlaylistCardsIntoList(playlists, containerId) {
       var idx = parseInt(this.getAttribute('data-idx'), 10);
       var pl = playlists[idx];
       if (pl) {
-        openPlaylistPreview(pl.id, pl.name, pl.coverImgUrl, pl.creator ? pl.creator.nickname : '');
+        openPlaylistPreview(pl.id, pl.name, pl.coverImgUrl, pl.creator ? pl.creator.nickname : '', pl.source);
       }
     });
   });
@@ -4678,7 +4692,7 @@ function renderPlaylistCardsIntoList(playlists, containerId) {
       var idx = parseInt(this.getAttribute('data-idx'), 10);
       var pl = playlists[idx];
       if (pl) {
-        openPlaylistPreview(pl.id, pl.name, pl.coverImgUrl, pl.creator ? pl.creator.nickname : '');
+        openPlaylistPreview(pl.id, pl.name, pl.coverImgUrl, pl.creator ? pl.creator.nickname : '', pl.source);
       }
     });
   });
@@ -4717,42 +4731,99 @@ function renderPlaylistCardsIntoList(playlists, containerId) {
   });
 }
 
+async function fetchQQRecommendPlaylists(category) {
+  var catKeywords = {
+    '全部': '精选',
+    '流行': '流行',
+    'ACG': 'ACG',
+    '古风': '古风',
+    '治愈': '治愈',
+    '轻音乐': '轻音乐',
+    '电子': '电音',
+    '摇滚': '摇滚',
+    '欧美': '欧美',
+    '粤语': '粤语'
+  };
+  var kw = catKeywords[category] || category || '精选';
+  var pages = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  var results = await Promise.all(pages.map(function(p) {
+    return fetch(`https://api.vkeys.cn/music/tencent/search/playlist?keyword=${encodeURIComponent(kw)}&page=${p}`)
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .catch(function() { return null; });
+  }));
+  var seenIds = new Set();
+  var playlists = [];
+  for (var i = 0; i < results.length; i++) {
+    var res = results[i];
+    if (res && (res.code === 0 || res.code === 200) && res.data && Array.isArray(res.data.list)) {
+      for (var j = 0; j < res.data.list.length; j++) {
+        var item = res.data.list[j];
+        if (item && item.dissID && !seenIds.has(String(item.dissID))) {
+          seenIds.add(String(item.dissID));
+          playlists.push({
+            id: String(item.dissID),
+            name: item.dissName,
+            coverImgUrl: item.dissPic,
+            trackCount: item.songCount || 0,
+            playCount: item.listenum || 0,
+            creator: { nickname: item.creator || 'QQ音乐精选' },
+            source: 'vkeys_tencent'
+          });
+        }
+      }
+    }
+  }
+  return playlists;
+}
+
 async function renderRecommendPlaylists(forceRefresh) {
   var doc = getDoc();
   var container = doc.getElementById('fire-discover-list');
   if (!container) return;
 
+  var source = state.settings.discoverSource || 'vkeys_tencent';
+  var sourceName = (source === 'vkeys_tencent') ? 'QQ音乐' : '网易云';
   var category = state.settings.discoverCategory || '全部';
   var cacheKey = 'rec_' + category;
+  var cache = (source === 'vkeys_tencent') ? _recommendQQCache : _recommendCache;
 
-  var cached = !forceRefresh && _recommendCache[cacheKey];
+  var cached = !forceRefresh && cache[cacheKey];
   if (cached && Array.isArray(cached) && cached.length > 0) {
     renderPlaylistCardsIntoList(cached, 'fire-discover-list');
     return;
   }
 
-  container.innerHTML = `<div style="text-align:center;padding:20px;opacity:0.6;font-size:13px;"><i class="fa-solid fa-spinner fa-spin"></i> 正在精选「${escapeHtml(category)}」推荐歌单...</div>`;
+  container.innerHTML = `<div style="text-align:center;padding:20px;opacity:0.6;font-size:13px;"><i class="fa-solid fa-spinner fa-spin"></i> 正在精选${sourceName}「${escapeHtml(category)}」歌单...</div>`;
 
   try {
-    var url = `https://music.163.com/api/playlist/list?cat=${encodeURIComponent(category)}&order=hot&offset=0&limit=30`;
-    var data = await neteaseFetch(url);
-    var playlists = (data && Array.isArray(data.playlists)) ? data.playlists : [];
+    var playlists = [];
+    if (source === 'vkeys_tencent') {
+      playlists = await fetchQQRecommendPlaylists(category);
+    } else {
+      var url = `https://music.163.com/api/playlist/list?cat=${encodeURIComponent(category)}&order=hot&offset=0&limit=30`;
+      var data = await neteaseFetch(url);
+      playlists = (data && Array.isArray(data.playlists)) ? data.playlists.map(p => Object.assign({}, p, { source: 'netease' })) : [];
 
-    // Fallback attempt: highquality
-    if (!playlists || playlists.length === 0) {
-      var hqUrl = `https://music.163.com/api/playlist/highquality/list?cat=${encodeURIComponent(category)}&limit=30`;
-      var hqData = await neteaseFetch(hqUrl);
-      if (hqData && Array.isArray(hqData.playlists)) {
-        playlists = hqData.playlists;
+      // Fallback attempt: highquality
+      if (!playlists || playlists.length === 0) {
+        var hqUrl = `https://music.163.com/api/playlist/highquality/list?cat=${encodeURIComponent(category)}&limit=30`;
+        var hqData = await neteaseFetch(hqUrl);
+        if (hqData && Array.isArray(hqData.playlists)) {
+          playlists = hqData.playlists.map(p => Object.assign({}, p, { source: 'netease' }));
+        }
       }
     }
 
     if (!playlists || playlists.length === 0) {
+      var switchBtnHtml = (source === 'netease')
+        ? `<div style="margin-top:10px;"><button id="fire-btn-switch-discover-qq" class="fire-btn" style="font-size:11px;padding:4px 12px;"><i class="fa-solid fa-arrows-rotate"></i> 切换至 QQ音乐歌单 (跨域免代理)</button></div>`
+        : '';
       container.innerHTML = `
         <div style="text-align:center;padding:30px 10px;opacity:0.6;font-size:12px;">
           <i class="fa-solid fa-compact-disc" style="font-size:24px;margin-bottom:8px;display:block;"></i>
-          暂未获取到推荐歌单<br>
+          暂未获取到${sourceName}推荐歌单<br>
           <button id="fire-btn-retry-rec" class="fire-btn fire-btn-normal" style="margin-top:10px;padding:4px 12px;">重试加载</button>
+          ${switchBtnHtml}
         </div>
       `;
       var retryBtn = doc.getElementById('fire-btn-retry-rec');
@@ -4761,23 +4832,43 @@ async function renderRecommendPlaylists(forceRefresh) {
           renderRecommendPlaylists(true);
         };
       }
+      var switchBtn = doc.getElementById('fire-btn-switch-discover-qq');
+      if (switchBtn) {
+        switchBtn.onclick = function() {
+          state.settings.discoverSource = 'vkeys_tencent';
+          saveState();
+          renderDiscoverTab(false);
+        };
+      }
       return;
     }
 
-    _recommendCache[cacheKey] = playlists;
+    cache[cacheKey] = playlists;
     renderPlaylistCardsIntoList(playlists, 'fire-discover-list');
   } catch (e) {
     console.error('[FIRE] Failed to fetch recommended playlists:', e);
+    var switchBtnHtml2 = (source === 'netease')
+      ? `<div style="margin-top:10px;"><button id="fire-btn-switch-discover-qq" class="fire-btn" style="font-size:11px;padding:4px 12px;"><i class="fa-solid fa-arrows-rotate"></i> 切换至 QQ音乐歌单 (跨域免代理)</button></div>`
+      : '';
     container.innerHTML = `
       <div style="text-align:center;padding:30px 10px;opacity:0.6;font-size:12px;color:var(--fire-em);">
-        加载推荐歌单失败，请检查网络<br>
+        加载${sourceName}推荐歌单失败，请检查网络<br>
         <button id="fire-btn-retry-rec" class="fire-btn fire-btn-normal" style="margin-top:10px;padding:4px 12px;">点击重试</button>
+        ${switchBtnHtml2}
       </div>
     `;
     var retryBtn2 = doc.getElementById('fire-btn-retry-rec');
     if (retryBtn2) {
       retryBtn2.onclick = function() {
         renderRecommendPlaylists(true);
+      };
+    }
+    var switchBtn2 = doc.getElementById('fire-btn-switch-discover-qq');
+    if (switchBtn2) {
+      switchBtn2.onclick = function() {
+        state.settings.discoverSource = 'vkeys_tencent';
+        saveState();
+        renderDiscoverTab(false);
       };
     }
   }
@@ -4858,6 +4949,9 @@ async function renderDiscoverTab(forceRefresh) {
   var catBar = doc.getElementById('fire-discover-cat-bar');
   var titleEl = doc.getElementById('fire-discover-title');
   var refreshBtn = doc.getElementById('fire-discover-refresh-btn');
+  var sourceBar = doc.getElementById('fire-discover-source-bar');
+  var sourceQQ = doc.getElementById('fire-discover-source-qq');
+  var sourceNE = doc.getElementById('fire-discover-source-netease');
 
   if (!container) return;
 
@@ -4877,6 +4971,36 @@ async function renderDiscoverTab(forceRefresh) {
     state.settings.discoverSubtab = 'recommend';
   }
 
+  var source = state.settings.discoverSource || 'vkeys_tencent';
+
+  // Bind source toggle buttons
+  if (sourceQQ) {
+    sourceQQ.onclick = function() {
+      if (state.settings.discoverSource === 'vkeys_tencent') return;
+      state.settings.discoverSource = 'vkeys_tencent';
+      saveState();
+      renderDiscoverTab(false);
+    };
+    if (source === 'vkeys_tencent') {
+      sourceQQ.classList.add('active');
+    } else {
+      sourceQQ.classList.remove('active');
+    }
+  }
+  if (sourceNE) {
+    sourceNE.onclick = function() {
+      if (state.settings.discoverSource === 'netease') return;
+      state.settings.discoverSource = 'netease';
+      saveState();
+      renderDiscoverTab(false);
+    };
+    if (source === 'netease') {
+      sourceNE.classList.add('active');
+    } else {
+      sourceNE.classList.remove('active');
+    }
+  }
+
   // Bind refresh button
   if (refreshBtn) {
     refreshBtn.onclick = function() {
@@ -4884,7 +5008,11 @@ async function renderDiscoverTab(forceRefresh) {
         _discoverCache = {};
         renderChartsList(true);
       } else {
-        _recommendCache = {};
+        if (state.settings.discoverSource === 'vkeys_tencent') {
+          _recommendQQCache = {};
+        } else {
+          _recommendCache = {};
+        }
         renderRecommendPlaylists(true);
       }
     };
@@ -4911,13 +5039,15 @@ async function renderDiscoverTab(forceRefresh) {
   if (state.settings.discoverSubtab === 'charts' && isChartsEnabled) {
     if (btnRec) btnRec.classList.remove('active');
     if (btnCharts) btnCharts.classList.add('active');
-    if (titleEl) titleEl.textContent = '网易云官方榜单';
+    if (titleEl) titleEl.textContent = '官方榜单';
+    if (sourceBar) sourceBar.style.display = 'none';
     if (catBar) catBar.style.display = 'none';
     renderChartsList(forceRefresh);
   } else {
     if (btnRec) btnRec.classList.add('active');
     if (btnCharts) btnCharts.classList.remove('active');
-    if (titleEl) titleEl.textContent = '网易云精选歌单';
+    if (titleEl) titleEl.textContent = (source === 'vkeys_tencent' ? 'QQ音乐' : '网易云') + '精选歌单';
+    if (sourceBar) sourceBar.style.display = 'flex';
     if (catBar) catBar.style.display = 'flex';
     renderDiscoverCategoryBar();
     renderRecommendPlaylists(forceRefresh);
