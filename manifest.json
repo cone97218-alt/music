@@ -6,7 +6,7 @@
   "js": "index.js",
   "css": "style.css",
   "author": "Antigravity",
-  "version": "2.4.5",
+  "version": "2.4.6",
   "homePage": "",
   "hooks": {
     "activate": "init"

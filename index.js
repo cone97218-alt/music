@@ -50,6 +50,8 @@ var state = {
     floatingBallTop: '',
     statusBarAvoidance: true,
     outsideClickAction: 'close',
+    showStartTimeBtn: true,
+    showTagBtn: true,
     audioQuality: '999',
     desktopLyricsEnabled: false,
     desktopLyricsLocked: false,
@@ -302,6 +304,12 @@ function loadState() {
       }
       if (!state.settings.outsideClickAction) {
         state.settings.outsideClickAction = 'close';
+      }
+      if (state.settings.showStartTimeBtn === undefined) {
+        state.settings.showStartTimeBtn = true;
+      }
+      if (state.settings.showTagBtn === undefined) {
+        state.settings.showTagBtn = true;
       }
       if (state.settings.enableChartsTab === undefined) {
         state.settings.enableChartsTab = true;
@@ -2186,7 +2194,7 @@ function createUI() {
           <div style="margin-top: 8px; padding: 6px 8px; background: rgba(255,255,255,0.04); border-radius: 4px; display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--fire-border);">
             <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
               <span>拓展运行版本</span>
-              <span style="font-weight: bold; color: var(--fire-accent);" title="若版本号不是 v2.4.5，说明手机浏览器命中了旧缓存">v2.4.5</span>
+              <span style="font-weight: bold; color: var(--fire-accent);" title="若版本号不是 v2.4.6，说明手机浏览器命中了旧缓存">v2.4.6</span>
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
               <span>手机接口自检</span>
@@ -2242,6 +2250,19 @@ function createUI() {
               <button id="fire-import-backup-btn" class="fire-btn fire-btn-normal" style="flex: 1; padding: 4px; font-size: 11px; height: 28px;" title="从JSON备份中恢复歌单">恢复歌单</button>
             </div>
             <input type="file" id="fire-import-backup-file" style="display: none;" accept=".json">
+          </div>
+
+          <!-- Part 3: Song Item Action Buttons Customization -->
+          <div style="border-top: 1px solid rgba(255,255,255,0.05); padding-top: 8px; display: flex; flex-direction: column; gap: 6px;">
+            <span style="font-size: 11px; opacity: 0.8;">歌单曲目功能按键显示</span>
+            <label class="fire-settings-item" style="display: flex; align-items: center; justify-content: space-between; padding: 2px 0; font-size: 12px; cursor: pointer;">
+              <span title="显示在歌单曲目右侧的时钟图标，点击可设置该歌曲的特定起播秒数/进度">设置起播时间按键</span>
+              <input type="checkbox" id="fire-setting-show-start-time-btn">
+            </label>
+            <label class="fire-settings-item" style="display: flex; align-items: center; justify-content: space-between; padding: 2px 0; font-size: 12px; cursor: pointer;">
+              <span title="显示在歌单曲目右侧的Tag标签图标及曲目下方的「＋标签」快捷入口">加 Tag (标签) 功能键</span>
+              <input type="checkbox" id="fire-setting-show-tag-btn">
+            </label>
           </div>
         </div>
       </div>
@@ -2603,6 +2624,13 @@ function createUI() {
   var chkLocalMusic = doc.getElementById('fire-setting-local-music-enable');
   if (chkLocalMusic) chkLocalMusic.checked = !!state.settings.localPlaybackEnabled;
 
+  // 歌单起播时间与Tag按键显示设置
+  var chkStartTime = doc.getElementById('fire-setting-show-start-time-btn');
+  if (chkStartTime) chkStartTime.checked = state.settings.showStartTimeBtn !== false;
+
+  var chkTag = doc.getElementById('fire-setting-show-tag-btn');
+  if (chkTag) chkTag.checked = state.settings.showTagBtn !== false;
+
   // Set default desktop lyrics selection
   var chkEnable = doc.getElementById('fire-setting-lyrics-enable');
   if (chkEnable) chkEnable.checked = !!state.settings.desktopLyricsEnabled;
@@ -2829,6 +2857,27 @@ function bindUIEvents() {
       if (btnAddLocal) {
         btnAddLocal.style.display = state.settings.localPlaybackEnabled ? '' : 'none';
       }
+    });
+  }
+
+  // 歌单起播时间与Tag按键显示设置监听
+  var chkStartTime = doc.getElementById('fire-setting-show-start-time-btn');
+  if (chkStartTime) {
+    chkStartTime.addEventListener('change', function () {
+      state.settings.showStartTimeBtn = !!this.checked;
+      saveState();
+      renderPlaylistSongs();
+      showToast(this.checked ? "已开启歌单起播时间按键" : "已隐藏歌单起播时间按键");
+    });
+  }
+
+  var chkTag = doc.getElementById('fire-setting-show-tag-btn');
+  if (chkTag) {
+    chkTag.addEventListener('change', function () {
+      state.settings.showTagBtn = !!this.checked;
+      saveState();
+      renderPlaylistSongs();
+      showToast(this.checked ? "已开启歌单加Tag按键" : "已隐藏歌单加Tag按键");
     });
   }
 
@@ -5016,14 +5065,19 @@ function renderPlaylistSongs() {
     };
     var badge = sourceBadges[song.source] || '<span class="fire-source-badge">其它</span>';
 
+    var showStartTime = state.settings.showStartTimeBtn !== false;
+    var showTags = state.settings.showTagBtn !== false;
+
     var tagBadges = Array.isArray(song.tags) && song.tags.length > 0
       ? song.tags.map(function(t) { return `<span class="fire-tag-badge" data-tag="${t.replace(/"/g,'&quot;')}">${t}</span>`; }).join('')
       : '';
-    var startTimeBadge = song.startTime
+    var startTimeBadge = (song.startTime && showStartTime)
       ? `<span class="fire-time-badge" style="background:rgba(59, 130, 246, 0.15);color:#60a5fa;border:1px solid rgba(59, 130, 246, 0.3);padding:2px 6px;border-radius:4px;font-size:10px;margin-right:4px;cursor:pointer;" title="点击修改起播时间"><i class="fa-solid fa-clock"></i> ${song.startTime}</span>`
       : '';
-    var tagDisplay = !isVirtual
-      ? `<div class="fire-tag-row">${startTimeBadge}${tagBadges}<span class="fire-tag-add">＋标签</span></div>`
+    var addTagBtn = showTags ? `<span class="fire-tag-add">＋标签</span>` : '';
+    var hasTagRow = !isVirtual && (startTimeBadge || tagBadges || addTagBtn);
+    var tagDisplay = hasTagRow
+      ? `<div class="fire-tag-row">${startTimeBadge}${tagBadges}${addTagBtn}</div>`
       : '';
 
     var liked = isSongLiked(song);
@@ -5037,8 +5091,8 @@ function renderPlaylistSongs() {
       </div>
       <div class="fire-music-item-actions">
         ${song.album ? `<button class="fire-music-item-btn album-btn" title="查看专辑"><i class="fa-solid fa-compact-disc"></i></button>` : ''}
-        ${!isVirtual ? `<button class="fire-music-item-btn time-btn" title="编辑起播时间"><i class="fa-solid fa-clock"></i></button>` : ''}
-        ${!isVirtual ? `<button class="fire-music-item-btn tag-btn" title="编辑 Tag"><i class="fa-solid fa-tag"></i></button>` : ''}
+        ${!isVirtual && showStartTime ? `<button class="fire-music-item-btn time-btn" title="编辑起播时间"><i class="fa-solid fa-clock"></i></button>` : ''}
+        ${!isVirtual && showTags ? `<button class="fire-music-item-btn tag-btn" title="编辑 Tag"><i class="fa-solid fa-tag"></i></button>` : ''}
         <button class="fire-music-item-btn like-btn ${liked ? 'liked' : ''}" data-song-id="${song.id}" title="${liked ? '从“我喜欢的”移除' : '添加到“我喜欢的”'}">
           <i class="${liked ? 'fa-solid fa-heart' : 'fa-regular fa-heart'}" style="${liked ? 'color:#ef4444;' : ''}"></i>
         </button>
