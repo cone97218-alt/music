@@ -1116,56 +1116,117 @@ function formatPlayCount(count) {
   return String(count);
 }
 
+var lastNeteaseDiag = {
+  time: '',
+  url: '',
+  stProxyStatus: null,
+  error: null,
+  success: false
+};
+
 async function neteaseFetch(url) {
+  lastNeteaseDiag.time = new Date().toLocaleTimeString();
+  lastNeteaseDiag.url = url;
+  lastNeteaseDiag.stProxyStatus = null;
+  lastNeteaseDiag.error = null;
+  lastNeteaseDiag.success = false;
+
   // 1. Primary: SillyTavern internal backend proxy /api/search/visit
   try {
     var headers = (typeof getRequestHeaders === 'function') ? getRequestHeaders() : {};
     if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+
+    // Auto-heal missing CSRF token on mobile
+    if (!headers['X-CSRF-Token'] && !headers['x-csrf-token']) {
+      try {
+        var tRes = await fetch('/csrf-token', { credentials: 'include' });
+        if (tRes.ok) {
+          var tJson = await tRes.json();
+          if (tJson && tJson.token) headers['X-CSRF-Token'] = tJson.token;
+        }
+      } catch (eToken) {}
+    }
+
     var res = await fetch('/api/search/visit', {
       method: 'POST',
       headers: headers,
       body: JSON.stringify({ url: url, html: false }),
       credentials: 'include'
     });
+
+    lastNeteaseDiag.stProxyStatus = res.status;
+
+    // If 403 Forbidden, retry once with a freshly requested CSRF token
+    if (res.status === 403) {
+      try {
+        var tRes2 = await fetch('/csrf-token', { credentials: 'include' });
+        if (tRes2.ok) {
+          var tJson2 = await tRes2.json();
+          if (tJson2 && tJson2.token) {
+            headers['X-CSRF-Token'] = tJson2.token;
+            res = await fetch('/api/search/visit', {
+              method: 'POST',
+              headers: headers,
+              body: JSON.stringify({ url: url, html: false }),
+              credentials: 'include'
+            });
+            lastNeteaseDiag.stProxyStatus = res.status;
+          }
+        }
+      } catch (eRetry) {}
+    }
+
     if (res.ok) {
       var text = await res.text();
       try {
         var data = JSON.parse(text);
-        if (data) return data;
+        if (data) {
+          lastNeteaseDiag.success = true;
+          return data;
+        }
       } catch (eJson) {
+        lastNeteaseDiag.error = '返回数据非标准JSON格式: ' + (text ? text.slice(0, 40) : '空');
         console.warn('[FIRE] ST proxy visit JSON parse error:', eJson);
       }
     } else {
+      lastNeteaseDiag.error = '酒馆中转接口响应状态 HTTP ' + res.status + (res.status === 403 ? ' (无权限/未登录用户账户)' : '');
       console.warn('[FIRE] ST proxy visit returned status:', res.status);
     }
   } catch (e) {
+    lastNeteaseDiag.error = '酒馆中转请求异常: ' + (e.message || String(e));
     console.warn('[FIRE] ST proxy visit failed, trying fallback...', e);
   }
 
   // 2. Direct fetch (if environment allows or same-origin)
   try {
-    var directRes = await fetch(url, { signal: AbortSignal.timeout(4000) });
+    var directRes = await fetch(url, { signal: AbortSignal.timeout(3000) });
     if (directRes.ok) {
       var directText = await directRes.text();
       try {
-        return JSON.parse(directText);
+        var dData = JSON.parse(directText);
+        if (dData) {
+          lastNeteaseDiag.success = true;
+          return dData;
+        }
       } catch (eJson2) {}
     }
   } catch (e2) {}
 
-  // 3. Fallback: Public CORS proxies (including multiple reliable fallbacks)
+  // 3. Fallback: Public CORS proxies
   var proxies = [
     'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
     'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(url),
-    'https://corsproxy.io/?url=' + encodeURIComponent(url),
   ];
   for (var i = 0; i < proxies.length; i++) {
     try {
-      var pRes = await fetch(proxies[i], { signal: AbortSignal.timeout(5000) });
+      var pRes = await fetch(proxies[i], { signal: AbortSignal.timeout(4000) });
       if (pRes.ok) {
         var pText = await pRes.text();
         var pData = JSON.parse(pText);
-        if (pData) return pData;
+        if (pData) {
+          lastNeteaseDiag.success = true;
+          return pData;
+        }
       }
     } catch (eProxy) {}
   }
@@ -1528,7 +1589,15 @@ async function performPlaylistSearch(query, page) {
   } catch (err) {
     console.error("[FIRE] Playlist search failed:", err);
     if (container) {
-      container.innerHTML = '<div style="text-align:center;padding:20px;opacity:0.6;color:var(--fire-em);">搜索歌单失败，请检查网络或稍后重试</div>';
+      container.innerHTML = `
+        <div style="text-align:center;padding:24px 12px;font-size:12px;color:var(--fire-em);">
+          <i class="fa-solid fa-triangle-exclamation" style="font-size:24px;margin-bottom:8px;display:block;"></i>
+          搜索歌单失败<br>
+          <div style="font-size:11px;opacity:0.85;margin-top:6px;background:rgba(255,100,100,0.1);padding:6px 10px;border-radius:4px;display:inline-block;max-width:90%;">
+            排查信息: ${escapeHtml(lastNeteaseDiag.error || err.message || '网络请求超时')}
+          </div>
+        </div>
+      `;
     }
   }
 }
@@ -1539,10 +1608,14 @@ function renderPlaylistSearchResults(playlists) {
   if (!container) return;
 
   if (!playlists || playlists.length === 0) {
+    var diagHtml = lastNeteaseDiag.error
+      ? `<div style="font-size:11px;color:var(--fire-em);margin-top:8px;background:rgba(255,100,100,0.1);padding:6px 10px;border-radius:4px;display:inline-block;max-width:90%;">排查信息: ${escapeHtml(lastNeteaseDiag.error)}</div>`
+      : `<div style="font-size:11px;opacity:0.6;margin-top:8px;">(接口状态: ${lastNeteaseDiag.stProxyStatus || '无响应'}，网易云无匹配结果)</div>`;
     container.innerHTML = `
-      <div style="text-align:center;padding:30px 10px;opacity:0.6;font-size:12px;">
-        <i class="fa-solid fa-circle-question" style="font-size:24px;margin-bottom:8px;display:block;"></i>
-        未找到相关歌单，换个关键词试试吧
+      <div style="text-align:center;padding:30px 10px;font-size:12px;">
+        <i class="fa-solid fa-circle-question" style="font-size:24px;margin-bottom:8px;display:block;opacity:0.5;"></i>
+        未找到相关歌单，换个关键词试试吧<br>
+        ${diagHtml}
       </div>
     `;
     return;
@@ -2110,6 +2183,17 @@ function createUI() {
             <span>开启相似歌曲推荐</span>
             <input type="checkbox" id="fire-setting-simi-songs-enable">
           </label>
+          <div style="margin-top: 8px; padding: 6px 8px; background: rgba(255,255,255,0.04); border-radius: 4px; display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--fire-border);">
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+              <span>拓展运行版本</span>
+              <span style="font-weight: bold; color: var(--fire-accent);" title="若版本号不是 v2.4.5，说明手机浏览器命中了旧缓存">v2.4.5</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+              <span>手机接口自检</span>
+              <button type="button" id="fire-btn-run-diag" class="fire-btn" style="padding: 2px 8px; font-size: 11px; height: 24px;">测试连接</button>
+            </div>
+            <div id="fire-diag-result" style="display: none; font-size: 10px; opacity: 0.9; margin-top: 2px; word-break: break-all; line-height: 1.4;"></div>
+          </div>
           <div style="margin-top: 8px; display: flex; flex-direction: column; gap: 4px;">
             <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; opacity: 0.8;">
               <span>运行日志 (最近10条)</span>
@@ -2364,7 +2448,7 @@ function createUI() {
             </div>
             <form id="fire-search-form" class="fire-search-form" action="javascript:void(0);">
               <input type="search" id="fire-search-input" class="fire-input" enterkeyhint="search" placeholder="${state.settings.searchMode === 'playlist' ? '输入关键词搜索网易云歌单...' : '输入歌名或歌手搜索...'}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
-              <button type="button" id="fire-search-btn" class="fire-btn">搜索</button>
+              <button type="submit" id="fire-search-btn" class="fire-btn">搜索</button>
             </form>
             <div id="fire-search-source-filter" class="fire-source-filter-bar" style="display: ${state.settings.searchMode === 'playlist' ? 'none' : 'flex'};"></div>
             <div class="fire-music-list fire-scroll" id="fire-search-results">
@@ -2884,6 +2968,56 @@ function bindUIEvents() {
       e.stopPropagation();
       errorLogs = [];
       renderLogsUI();
+    });
+  }
+
+  // Mobile Diagnostic Tool Event
+  var diagBtn = doc.getElementById('fire-btn-run-diag');
+  var diagResult = doc.getElementById('fire-diag-result');
+  if (diagBtn) {
+    diagBtn.addEventListener('click', async function (e) {
+      e.stopPropagation();
+      diagBtn.disabled = true;
+      diagBtn.textContent = '测试中...';
+      if (diagResult) {
+        diagResult.style.display = 'block';
+        diagResult.style.color = 'var(--fire-text)';
+        diagResult.textContent = '正在发起测试 (检测 CSRF Token 与网易云歌单中转)...';
+      }
+      try {
+        var t1 = Date.now();
+        var data = await neteaseFetch('https://music.163.com/api/search/get/web?s=' + encodeURIComponent('周杰伦') + '&type=1000&offset=0&limit=3');
+        var cost = Date.now() - t1;
+        var count = (data && data.result && Array.isArray(data.result.playlists)) ? data.result.playlists.length : 0;
+        if (count > 0) {
+          var successMsg = `✅ 接口通畅！耗时 ${cost}ms，成功拉取到 ${count} 条歌单测试数据`;
+          if (diagResult) {
+            diagResult.style.color = '#4ade80';
+            diagResult.textContent = successMsg;
+          }
+          showToast(successMsg);
+          addLog(successMsg);
+        } else {
+          var failMsg = `⚠️ 接口无数据。状态码: ${lastNeteaseDiag.stProxyStatus || '无响应'}，详情: ${lastNeteaseDiag.error || '未解析出有效歌单'}`;
+          if (diagResult) {
+            diagResult.style.color = 'var(--fire-em)';
+            diagResult.textContent = failMsg;
+          }
+          showToast(failMsg);
+          addLog(failMsg);
+        }
+      } catch (err) {
+        var errMsg = `❌ 测试失败: ${err.message}`;
+        if (diagResult) {
+          diagResult.style.color = 'var(--fire-em)';
+          diagResult.textContent = errMsg;
+        }
+        showToast(errMsg);
+        addLog(errMsg);
+      } finally {
+        diagBtn.disabled = false;
+        diagBtn.textContent = '测试连接';
+      }
     });
   }
 
@@ -3477,6 +3611,7 @@ function bindUIEvents() {
       });
     });
 
+    var searchDebounceTimer = null;
     var handleSearch = function () {
       var val = searchInput.value.trim();
       if (val) {
@@ -3490,30 +3625,31 @@ function bindUIEvents() {
       }
     };
 
+    var triggerSearch = function (e) {
+      if (e) {
+        if (typeof e.preventDefault === 'function') e.preventDefault();
+        if (typeof e.stopPropagation === 'function') e.stopPropagation();
+      }
+      if (searchDebounceTimer) return;
+      searchDebounceTimer = setTimeout(function () {
+        searchDebounceTimer = null;
+      }, 400);
+      searchInput.blur();
+      handleSearch();
+    };
+
     if (searchForm) {
-      searchForm.addEventListener('submit', function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        searchInput.blur();
-        handleSearch();
-      });
+      searchForm.addEventListener('submit', triggerSearch);
     }
 
     if (searchBtn) {
-      searchBtn.addEventListener('click', function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        searchInput.blur();
-        handleSearch();
-      });
+      searchBtn.addEventListener('click', triggerSearch);
+      searchBtn.addEventListener('touchend', triggerSearch);
     }
 
     searchInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' || e.keyCode === 13) {
-        e.preventDefault();
-        e.stopPropagation();
-        searchInput.blur();
-        handleSearch();
+      if (e.key === 'Enter' || e.keyCode === 13 || e.which === 13) {
+        triggerSearch(e);
       }
     });
   }
