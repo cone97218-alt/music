@@ -1599,55 +1599,47 @@ async function handlePlaylistAction(pl, action) {
   }
 
   if (action === 'append') {
-    appendTracksToCurrent(songs);
-    showToast(`已追加「${pl.name}」（${songs.length} 首）`);
+    appendTracksToActiveQueue(songs);
+    showToast(`已追加「${pl.name}」（${songs.length} 首）到当前播放队列`);
   } else if (action === 'replace') {
-    replaceCurrentWithTracks(songs);
-    showToast(`已替换并开始播放「${pl.name}」（${songs.length} 首）`);
+    replaceActiveQueueWithTracks(songs);
+    showToast(`已替换当前播放队列并开始播放「${pl.name}」（${songs.length} 首）`);
   } else if (action === 'import') {
     saveTracksAsLocalPlaylist(pl.name, songs);
   }
 }
 
-function appendTracksToCurrent(songs) {
-  var targetName = state.currentPlaylist;
-  if (targetName === '__active_queue__') {
-    if (!Array.isArray(state.activeQueue)) state.activeQueue = [];
-    var existingIds = new Set(state.activeQueue.map(s => s.id));
-    var newSongs = songs.filter(s => !existingIds.has(s.id));
+function appendTracksToActiveQueue(songs) {
+  if (!Array.isArray(state.activeQueue)) state.activeQueue = [];
+  var existingIds = new Set(state.activeQueue.map(s => String(s.id)));
+  var newSongs = (songs || []).filter(s => s && s.id && !existingIds.has(String(s.id)));
+  if (newSongs.length > 0) {
     state.activeQueue = state.activeQueue.concat(newSongs);
-  } else {
-    if (!targetName || !state.playlists[targetName]) {
-      targetName = '默认歌单';
-      state.currentPlaylist = targetName;
-      if (!state.playlists[targetName]) state.playlists[targetName] = [];
-    }
-    var existingIds = new Set((state.playlists[targetName] || []).map(s => s.id));
-    var newSongs = songs.filter(s => !existingIds.has(s.id));
-    state.playlists[targetName] = (state.playlists[targetName] || []).concat(newSongs);
   }
+  state.currentPlaylist = '__active_queue__';
   saveState();
   renderPlaylistOptions();
   renderPlaylistSongs();
+  return newSongs.length;
+}
+
+function replaceActiveQueueWithTracks(songs) {
+  state.activeQueue = Array.isArray(songs) ? songs.slice() : [];
+  state.currentPlaylist = '__active_queue__';
+  saveState();
+  renderPlaylistOptions();
+  renderPlaylistSongs();
+  if (state.activeQueue.length > 0) {
+    playSong(state.activeQueue[0]);
+  }
+}
+
+function appendTracksToCurrent(songs) {
+  return appendTracksToActiveQueue(songs);
 }
 
 function replaceCurrentWithTracks(songs) {
-  var targetName = state.currentPlaylist;
-  if (targetName === '__active_queue__') {
-    state.activeQueue = songs;
-  } else {
-    if (!targetName || !state.playlists[targetName]) {
-      targetName = '默认歌单';
-      state.currentPlaylist = targetName;
-    }
-    state.playlists[targetName] = songs;
-  }
-  saveState();
-  renderPlaylistOptions();
-  renderPlaylistSongs();
-  if (songs.length > 0) {
-    playSong(songs[0]);
-  }
+  return replaceActiveQueueWithTracks(songs);
 }
 
 function saveTracksAsLocalPlaylist(playlistName, songs) {
@@ -1692,8 +1684,8 @@ async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator, 
       <button id="fire-preview-btn-close" class="fire-playlist-act-btn" style="width:28px;height:28px;font-size:13px;" title="关闭"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <div class="fire-preview-modal-actions" id="fire-preview-modal-actions" style="display:none;">
-      <button id="fire-preview-btn-playall" class="fire-btn" title="替换并从头播放全部"><i class="fa-solid fa-play"></i> 播放全部</button>
-      <button id="fire-preview-btn-appendall" class="fire-btn fire-btn-normal" title="追加到当前列表末尾"><i class="fa-solid fa-plus"></i> 全部追加</button>
+      <button id="fire-preview-btn-playall" class="fire-btn" title="替换当前播放队列并从头播放全部"><i class="fa-solid fa-play"></i> 播放全部</button>
+      <button id="fire-preview-btn-appendall" class="fire-btn fire-btn-normal" title="追加到当前播放队列末尾"><i class="fa-solid fa-plus"></i> 全部追加</button>
       <button id="fire-preview-btn-saveas" class="fire-btn fire-btn-normal" title="保存为本地歌单"><i class="fa-regular fa-star"></i> 存为歌单</button>
     </div>
     <div class="fire-preview-modal-body fire-scroll" id="fire-preview-modal-body">
@@ -1745,15 +1737,15 @@ async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator, 
 
   if (playAllBtn) {
     playAllBtn.onclick = function() {
-      replaceCurrentWithTracks(songs);
-      showToast(`已开始播放「${playlistName}」`);
+      replaceActiveQueueWithTracks(songs);
+      showToast(`已替换当前播放队列并开始播放「${playlistName}」`);
       closePlaylistPreview();
     };
   }
   if (appendAllBtn) {
     appendAllBtn.onclick = function() {
-      appendTracksToCurrent(songs);
-      showToast(`已追加「${playlistName}」（${songs.length} 首）`);
+      appendTracksToActiveQueue(songs);
+      showToast(`已追加「${playlistName}」（${songs.length} 首）到当前播放队列`);
     };
   }
   if (saveAsBtn) {
@@ -1775,7 +1767,7 @@ async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator, 
         </div>
         <div class="fire-preview-song-btns">
           <button class="fire-preview-song-play" data-song-idx="${idx}" title="试听/播放此曲"><i class="fa-solid fa-play"></i></button>
-          <button class="fire-preview-song-add" data-song-idx="${idx}" title="添加到当前播放列表"><i class="fa-solid fa-plus"></i></button>
+          <button class="fire-preview-song-add" data-song-idx="${idx}" title="添加到当前播放队列"><i class="fa-solid fa-plus"></i></button>
         </div>
       </div>
     `;
@@ -1799,8 +1791,8 @@ async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator, 
       var idx = parseInt(this.getAttribute('data-song-idx'), 10);
       var s = songs[idx];
       if (s) {
-        appendTracksToCurrent([s]);
-        showToast(`已添加「${s.name}」到当前列表`);
+        appendTracksToActiveQueue([s]);
+        showToast(`已添加「${s.name}」到当前播放队列`);
       }
     });
   });
@@ -2025,8 +2017,8 @@ function renderPlaylistSearchResults(playlists) {
             </div>
             <div class="fire-playlist-card-actions">
               <button class="fire-playlist-act-btn fire-pl-act-preview" data-idx="${idx}" title="查看歌单曲目"><i class="fa-solid fa-list-ul"></i></button>
-              <button class="fire-playlist-act-btn fire-pl-act-append" data-idx="${idx}" title="追加全部到当前列表"><i class="fa-solid fa-plus"></i></button>
-              <button class="fire-playlist-act-btn fire-pl-act-replace" data-idx="${idx}" title="替换当前列表并播放"><i class="fa-solid fa-play"></i></button>
+              <button class="fire-playlist-act-btn fire-pl-act-append" data-idx="${idx}" title="追加全部到当前播放队列"><i class="fa-solid fa-plus"></i></button>
+              <button class="fire-playlist-act-btn fire-pl-act-replace" data-idx="${idx}" title="替换当前播放队列并播放"><i class="fa-solid fa-play"></i></button>
               <button class="fire-playlist-act-btn fire-pl-act-import" data-idx="${idx}" title="收藏为本地歌单"><i class="fa-regular fa-star"></i></button>
             </div>
           </div>
@@ -4658,8 +4650,8 @@ function renderPlaylistCardsIntoList(playlists, containerId) {
             </div>
             <div class="fire-playlist-card-actions">
               <button class="fire-playlist-act-btn fire-pl-act-preview" data-idx="${idx}" title="查看歌单曲目"><i class="fa-solid fa-list-ul"></i></button>
-              <button class="fire-playlist-act-btn fire-pl-act-append" data-idx="${idx}" title="追加全部到当前列表"><i class="fa-solid fa-plus"></i></button>
-              <button class="fire-playlist-act-btn fire-pl-act-replace" data-idx="${idx}" title="替换当前列表并播放"><i class="fa-solid fa-play"></i></button>
+              <button class="fire-playlist-act-btn fire-pl-act-append" data-idx="${idx}" title="追加全部到当前播放队列"><i class="fa-solid fa-plus"></i></button>
+              <button class="fire-playlist-act-btn fire-pl-act-replace" data-idx="${idx}" title="替换当前播放队列并播放"><i class="fa-solid fa-play"></i></button>
               <button class="fire-playlist-act-btn fire-pl-act-import" data-idx="${idx}" title="收藏为本地歌单"><i class="fa-regular fa-star"></i></button>
             </div>
           </div>
