@@ -22,18 +22,8 @@ import {
 } from './listen-together.js';
 
 // ─── Playback & App State ──────────────────────────────────────────────────────
-var state = {
-  playlists: {
-    "我喜欢的": [],
-    "默认歌单": []
-  },
-  currentPlaylist: "默认歌单",
-  currentSong: null,
-  isPlaying: false,
-  loopMode: 'list', // 'list', 'single', 'shuffle'
-  volume: 0.5,
-  activeQueue: [],
-  settings: {
+function getDefaultSettings() {
+  return {
     entryWand: true,
     entryQR: false,
     entrySlash: true,
@@ -100,7 +90,21 @@ var state = {
       targetPlaylist: '',
       fallbackRandom: true,
     }
-  }
+  };
+}
+
+var state = {
+  playlists: {
+    "我喜欢的": [],
+    "默认歌单": []
+  },
+  currentPlaylist: "默认歌单",
+  currentSong: null,
+  isPlaying: false,
+  loopMode: 'list', // 'list', 'single', 'shuffle'
+  volume: 0.5,
+  activeQueue: [],
+  settings: getDefaultSettings()
 };
 
 // ─── In-Memory Caches & Logging ───────────────────────────────────────────────
@@ -2963,6 +2967,13 @@ function createUI() {
   renderPlaylistOptions();
   renderPlaylistSongs();
   
+  // Set default settings state in DOM
+  syncAllSettingsToUI(doc);
+}
+
+function syncAllSettingsToUI(doc) {
+  if (!doc) doc = getDoc();
+
   // Set default entry points selection in dropdown
   var chkWand = doc.getElementById('fire-entry-wand');
   if (chkWand) chkWand.checked = state.settings.entryWand !== false;
@@ -2989,6 +3000,8 @@ function createUI() {
   // Restore minimized state if was minimized
   if (state.settings.isMinimized) {
     minimizePlayer(true);
+  } else {
+    minimizePlayer(false);
   }
 
   // Set default audio quality selection
@@ -3128,12 +3141,10 @@ function createUI() {
   if (inputZIndex) inputZIndex.value = state.settings.desktopLyricsZIndex !== undefined ? state.settings.desktopLyricsZIndex : 99999;
 
   // Set default search sources checkboxes
-  if (!state.settings.searchSources) {
-    state.settings.searchSources = ['netease', 'joox', 'bilibili', 'vkeys_tencent'];
-  }
+  var sources = state.settings.searchSources || ['netease', 'joox', 'bilibili', 'vkeys_tencent'];
   var sourceChks = doc.querySelectorAll('input[name="fire-search-source"]');
   sourceChks.forEach(chk => {
-    chk.checked = state.settings.searchSources.indexOf(chk.value) !== -1;
+    chk.checked = sources.indexOf(chk.value) !== -1;
   });
 
   // Set default show error toasts checkbox
@@ -3142,11 +3153,34 @@ function createUI() {
     chkShowError.checked = !!state.settings.showErrorToasts;
   }
 
+  // Update discover source buttons in header if present
+  var sourceQQ = doc.getElementById('fire-discover-source-qq');
+  var sourceNE = doc.getElementById('fire-discover-source-netease');
+  if (sourceQQ && sourceNE) {
+    if (state.settings.discoverSource === 'vkeys_tencent') {
+      sourceQQ.classList.add('active');
+      sourceNE.classList.remove('active');
+    } else {
+      sourceQQ.classList.remove('active');
+      sourceNE.classList.add('active');
+    }
+  }
+
   // Initial logs rendering
   renderLogsUI();
 
   // Ensure widget is generated and synchronized
   ensureDesktopLyrics(lyricsList, lastActiveLineIdx);
+}
+
+function resetExtensionSettings() {
+  var doc = getDoc();
+  state.settings = getDefaultSettings();
+  saveState();
+  applyDisplayMode();
+  runSelfHealingInjection();
+  syncAllSettingsToUI(doc);
+  showToast('FIRE 拓展设置已恢复默认 (歌单已完整保留)');
 }
 
 function bindUIEvents() {
@@ -7969,6 +8003,20 @@ export function init() {
     }));
   } catch (e) {
     console.warn("[FIRE] Failed to register slash command /fire:", e);
+  }
+
+  // 2. Slash Command: /fireset (reset extension settings, keeping playlists)
+  try {
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+      name: 'fireset',
+      callback: () => {
+        resetExtensionSettings();
+        return 'FIRE 音乐播放器拓展设置已恢复默认 (召出方式、窗口布局等已重置，歌单已完整保留)';
+      },
+      helpString: '初始化 FIRE 音乐播放器拓展设置（如召出方式、窗口布局等，不影响已有歌单）',
+    }));
+  } catch (e) {
+    console.warn("[FIRE] Failed to register slash command /fireset:", e);
   }
 
   // 2. Keyboard Shortcut: Alt + M (Toggle) and Escape (Dismiss)
