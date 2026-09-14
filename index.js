@@ -20,6 +20,7 @@ import {
   showListenTogetherHelp,
   updateListenTogetherPrompt,
 } from './listen-together.js';
+import { FloatingBall } from './floating-ball.js';
 
 // ─── Playback & App State ──────────────────────────────────────────────────────
 function getDefaultSettings() {
@@ -36,6 +37,8 @@ function getDefaultSettings() {
     floatingWidth: 700,
     floatingHeight: 520,
     isMinimized: false,
+    floatingBallAutoHide: true,
+    floatingBallSide: 'right',
     floatingBallLeft: '',
     floatingBallTop: '',
     statusBarAvoidance: true,
@@ -2351,6 +2354,10 @@ function createUI() {
               <span title="全屏或手机端高度全屏时为顶部状态栏预留安全距离，避免遮挡按钮">状态栏避让</span>
               <input type="checkbox" id="fire-setting-status-bar-avoidance">
             </label>
+            <label class="fire-settings-item" style="justify-content: space-between;">
+              <span title="悬浮球贴靠屏幕边缘时自动向外折叠收起半个身位，悬停或触碰时即刻呼出">悬浮球贴边半隐藏</span>
+              <input type="checkbox" id="fire-setting-floating-ball-autohide">
+            </label>
             <div class="fire-settings-sub-item" style="flex-direction: column; align-items: stretch; gap: 4px;">
               <div style="display: flex; justify-content: space-between; align-items: center;">
                 <span style="font-size: 11px;" title="在居中弹窗/抽屉模式下点击外部空白遮罩时的动作策略">外部空白点击行为</span>
@@ -2923,33 +2930,8 @@ function createUI() {
   `;
   doc.body.appendChild(panel);
 
-  // Floating Ball (for minimized state)
-  var ball = doc.createElement('div');
-  ball.id = 'fire-float-ball';
-  ball.className = 'fire-float-ball';
-  ball.style.display = 'none';
-  ball.innerHTML = `
-    <div class="fire-float-ball-inner" id="fire-float-ball-inner">
-      <img id="fire-float-ball-cover" style="display: none;" alt="cover" />
-      <div class="fire-float-center-dot" id="fire-float-center-dot" style="display: none;"></div>
-      <div class="fire-float-wave" id="fire-float-wave" style="display: none;">
-        <span></span><span></span><span></span>
-      </div>
-      <i id="fire-float-ball-icon" class="fa-solid fa-music fire-float-ball-icon"></i>
-    </div>
-    <div class="fire-float-pill pill-left" id="fire-float-pill">
-      <div class="fire-float-pill-info">
-        <span class="fire-float-pill-title" id="fire-float-pill-title">FIRE 音乐</span>
-        <span class="fire-float-pill-artist" id="fire-float-pill-artist">点击展开</span>
-      </div>
-      <div class="fire-float-pill-actions">
-        <button class="fire-pill-btn" id="fire-float-pill-toggle" title="播放/暂停"><i class="fa-solid fa-play"></i></button>
-        <button class="fire-pill-btn" id="fire-float-pill-next" title="下一首"><i class="fa-solid fa-forward-step"></i></button>
-        <button class="fire-pill-btn" id="fire-float-pill-expand" title="展开面板"><i class="fa-solid fa-up-right-and-down-left-from-center"></i></button>
-      </div>
-    </div>
-  `;
-  doc.body.appendChild(ball);
+  // Floating Ball (Zero 架构纯图标磁吸贴边半隐藏悬浮球)
+  FloatingBall.init(state, getDoc, saveState, { togglePlayPause, playNext, minimizePlayer, togglePanel });
 
   // Toast Container
   var toastEl = doc.createElement('div');
@@ -2989,6 +2971,12 @@ function syncAllSettingsToUI(doc) {
   var chkStatusBarAvoid = doc.getElementById('fire-setting-status-bar-avoidance');
   if (chkStatusBarAvoid) {
     chkStatusBarAvoid.checked = state.settings.statusBarAvoidance !== false;
+  }
+
+  // Set default floating ball auto-hide selection
+  var chkBallAutoHide = doc.getElementById('fire-setting-floating-ball-autohide');
+  if (chkBallAutoHide) {
+    chkBallAutoHide.checked = state.settings.floatingBallAutoHide !== false;
   }
 
   // Set default outside click action selection
@@ -3199,11 +3187,8 @@ function bindUIEvents() {
     });
   }
 
-  // Floating Ball Event Binding
-  var floatBall = doc.getElementById('fire-float-ball');
-  if (floatBall) {
-    bindFloatBallEvents(floatBall);
-  }
+  // Floating Ball Event Binding & Initialization (Zero 架构)
+  FloatingBall.init(state, getDoc, saveState, { togglePlayPause, playNext, minimizePlayer, togglePanel });
 
   // Floating Window Drag and Resize Bindings
   var mainPanel = doc.getElementById('fire-panel');
@@ -3638,6 +3623,17 @@ function bindUIEvents() {
       saveState();
       applyStatusBarAvoidance();
       showToast(this.checked ? "已开启状态栏避让" : "已关闭状态栏避让");
+    });
+  }
+
+  // Floating Ball Auto-Hide Toggle (贴边半隐藏设置)
+  var chkBallAutoHide = doc.getElementById('fire-setting-floating-ball-autohide');
+  if (chkBallAutoHide) {
+    chkBallAutoHide.addEventListener('change', function () {
+      state.settings.floatingBallAutoHide = !!this.checked;
+      saveState();
+      FloatingBall.updateAutoHideState();
+      showToast(this.checked ? "已开启悬浮球贴边半隐藏" : "已关闭悬浮球贴边半隐藏");
     });
   }
 
@@ -4665,6 +4661,16 @@ function renderDiscoverCategoryBar() {
       renderRecommendPlaylists(false);
     };
   });
+
+  if (!catBar._hasWheelListener) {
+    catBar._hasWheelListener = true;
+    catBar.addEventListener('wheel', function(e) {
+      if (e.deltaY !== 0) {
+        e.preventDefault();
+        catBar.scrollLeft += e.deltaY;
+      }
+    }, { passive: false });
+  }
 }
 
 function renderPlaylistCardsIntoList(playlists, containerId) {
@@ -4765,7 +4771,7 @@ function renderPlaylistCardsIntoList(playlists, containerId) {
   });
 }
 
-async function fetchQQRecommendPlaylists(category) {
+async function fetchQQRecommendPlaylists(category, isRefresh) {
   var catKeywords = {
     '全部': '精选',
     '流行': '流行',
@@ -4779,34 +4785,71 @@ async function fetchQQRecommendPlaylists(category) {
     '粤语': '粤语'
   };
   var kw = catKeywords[category] || category || '精选';
-  var pages = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-  var results = await Promise.all(pages.map(function(p) {
-    return fetch(`https://api.vkeys.cn/music/tencent/search/playlist?keyword=${encodeURIComponent(kw)}&page=${p}`)
-      .then(function(r) { return r.ok ? r.json() : null; })
-      .catch(function() { return null; });
-  }));
-  var seenIds = new Set();
-  var playlists = [];
-  for (var i = 0; i < results.length; i++) {
-    var res = results[i];
-    if (res && (res.code === 0 || res.code === 200) && res.data && Array.isArray(res.data.list)) {
-      for (var j = 0; j < res.data.list.length; j++) {
-        var item = res.data.list[j];
-        if (item && item.dissID && !seenIds.has(String(item.dissID))) {
-          seenIds.add(String(item.dissID));
-          playlists.push({
-            id: String(item.dissID),
-            name: item.dissName,
-            coverImgUrl: item.dissPic,
-            trackCount: item.songCount || 0,
-            playCount: item.listenum || 0,
-            creator: { nickname: item.creator || 'QQ音乐精选' },
-            source: 'vkeys_tencent'
-          });
+
+  // 随机页偏移机制：
+  // 1. 刷新时在 1~30 页之间随机生成起始页，避免每次都固定取相同的前10页
+  // 2. 避免连续刷新选到相同的起始页
+  var maxOffset = 30;
+  var count = 10;
+  var lastOffsetKey = '_fire_qq_pl_offset_' + encodeURIComponent(category);
+  var lastOffset = (typeof window !== 'undefined') ? (window[lastOffsetKey] || 1) : 1;
+
+  var startPage = 1;
+  if (isRefresh) {
+    startPage = Math.floor(Math.random() * maxOffset) + 1;
+    if (startPage === lastOffset) {
+      startPage = (startPage % maxOffset) + 1;
+    }
+  } else {
+    startPage = Math.floor(Math.random() * 5) + 1;
+  }
+  if (typeof window !== 'undefined') {
+    window[lastOffsetKey] = startPage;
+  }
+
+  var pages = [];
+  for (var p = startPage; p < startPage + count; p++) {
+    pages.push(p);
+  }
+
+  async function loadPages(pageArr) {
+    var results = await Promise.all(pageArr.map(function(pageNum) {
+      return fetch(`https://api.vkeys.cn/music/tencent/search/playlist?keyword=${encodeURIComponent(kw)}&page=${pageNum}`)
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .catch(function() { return null; });
+    }));
+    var seenIds = new Set();
+    var list = [];
+    for (var i = 0; i < results.length; i++) {
+      var res = results[i];
+      if (res && (res.code === 0 || res.code === 200) && res.data && Array.isArray(res.data.list)) {
+        for (var j = 0; j < res.data.list.length; j++) {
+          var item = res.data.list[j];
+          if (item && item.dissID && !seenIds.has(String(item.dissID))) {
+            seenIds.add(String(item.dissID));
+            list.push({
+              id: String(item.dissID),
+              name: item.dissName,
+              coverImgUrl: item.dissPic,
+              trackCount: item.songCount || 0,
+              playCount: item.listenum || 0,
+              creator: { nickname: item.creator || 'QQ音乐精选' },
+              source: 'vkeys_tencent'
+            });
+          }
         }
       }
     }
+    return list;
   }
+
+  var playlists = await loadPages(pages);
+
+  // 兜底保护：如果随机偏移页没有获取到歌单，自动降级从第 1 页拉取
+  if (!playlists || playlists.length === 0) {
+    playlists = await loadPages([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  }
+
   return playlists;
 }
 
@@ -4832,7 +4875,7 @@ async function renderRecommendPlaylists(forceRefresh) {
   try {
     var playlists = [];
     if (source === 'vkeys_tencent') {
-      playlists = await fetchQQRecommendPlaylists(category);
+      playlists = await fetchQQRecommendPlaylists(category, forceRefresh);
     } else {
       var url = `https://music.163.com/api/playlist/list?cat=${encodeURIComponent(category)}&order=hot&offset=0&limit=30`;
       var data = await neteaseFetch(url);
@@ -6667,115 +6710,25 @@ function syncDisplayTypeSettingsUI(doc) {
 }
 
 function updatePillOrientation(ball) {
-  if (!ball) return;
-  var pill = ball.querySelector('#fire-float-pill');
-  if (!pill) return;
-  var rect = ball.getBoundingClientRect();
-  if (rect.left < window.innerWidth / 2) {
-    pill.classList.remove('pill-left');
-    pill.classList.add('pill-right');
-  } else {
-    pill.classList.remove('pill-right');
-    pill.classList.add('pill-left');
-  }
+  FloatingBall.updatePillOrientation();
 }
 
 function updateFloatBallUI() {
-  var doc = getDoc();
-  var ball = doc.getElementById('fire-float-ball');
-  if (!ball) return;
-
-  var coverImg = doc.getElementById('fire-float-ball-cover');
-  var centerDot = doc.getElementById('fire-float-center-dot');
-  var waveEl = doc.getElementById('fire-float-wave');
-  var icon = doc.getElementById('fire-float-ball-icon');
-  var pillTitle = doc.getElementById('fire-float-pill-title');
-  var pillArtist = doc.getElementById('fire-float-pill-artist');
-  var pillToggle = doc.getElementById('fire-float-pill-toggle');
-
-  ball.classList.toggle('playing', !!state.isPlaying);
-
-  if (state.currentSong) {
-    ball.removeAttribute('title');
-    if (pillTitle) pillTitle.textContent = state.currentSong.name || '未知曲目';
-    if (pillArtist) pillArtist.textContent = state.currentSong.artist || '未知歌手';
-
-    var cover = state.currentSong.coverUrl || state.currentSong.picUrl;
-    if (cover) {
-      if (coverImg) {
-        coverImg.src = cover;
-        coverImg.style.display = 'block';
-      }
-      if (centerDot) centerDot.style.display = 'block';
-      if (waveEl) waveEl.style.display = 'none';
-      if (icon) icon.style.display = 'none';
-    } else {
-      if (coverImg) coverImg.style.display = 'none';
-      if (centerDot) centerDot.style.display = 'none';
-      if (state.isPlaying) {
-        if (waveEl) waveEl.style.display = 'flex';
-        if (icon) icon.style.display = 'none';
-      } else {
-        if (waveEl) waveEl.style.display = 'none';
-        if (icon) icon.style.display = 'block';
-      }
-    }
-  } else {
-    ball.removeAttribute('title');
-    if (pillTitle) pillTitle.textContent = 'FIRE 音乐';
-    if (pillArtist) pillArtist.textContent = '暂无播放曲目';
-    if (coverImg) coverImg.style.display = 'none';
-    if (centerDot) centerDot.style.display = 'none';
-    if (waveEl) waveEl.style.display = 'none';
-    if (icon) icon.style.display = 'block';
-  }
-
-  if (pillToggle) {
-    pillToggle.innerHTML = state.isPlaying
-      ? '<i class="fa-solid fa-pause"></i>'
-      : '<i class="fa-solid fa-play"></i>';
-  }
-
-  updatePillOrientation(ball);
-}
-
-var floatBallAutoHideTimer = null;
-
-function scheduleFloatBallAutoHide(ball) {
-  if (floatBallAutoHideTimer) {
-    clearTimeout(floatBallAutoHideTimer);
-    floatBallAutoHideTimer = null;
-  }
-  if (!ball || ball.style.display === 'none') return;
-  floatBallAutoHideTimer = setTimeout(function() {
-    if (!ball || ball.style.display === 'none' || ball.classList.contains('dragging')) return;
-    var rect = ball.getBoundingClientRect();
-    var w = rect.width || 46;
-    if (rect.left <= 30) {
-      ball.classList.remove('docked-right');
-      ball.classList.add('docked-left');
-    } else if (rect.left >= window.innerWidth - w - 30) {
-      ball.classList.remove('docked-left');
-      ball.classList.add('docked-right');
-    }
-  }, 2500);
+  FloatingBall.updateUI();
 }
 
 function cancelFloatBallAutoHide(ball) {
-  if (floatBallAutoHideTimer) {
-    clearTimeout(floatBallAutoHideTimer);
-    floatBallAutoHideTimer = null;
-  }
-  if (ball) {
-    ball.classList.remove('docked-left', 'docked-right');
-  }
+  // Handled automatically by FloatingBall CSS & Manager
+}
+
+function scheduleFloatBallAutoHide(ball) {
+  // Handled automatically by FloatingBall CSS & Manager
 }
 
 function minimizePlayer(isMin) {
   var doc = getDoc();
   var panel = doc.getElementById('fire-panel');
   var overlay = doc.getElementById('fire-overlay');
-  var ball = doc.getElementById('fire-float-ball');
 
   state.settings.isMinimized = !!isMin;
   saveState();
@@ -6784,331 +6737,13 @@ function minimizePlayer(isMin) {
     if (panel) panel.classList.remove('fire-open');
     if (overlay) overlay.style.display = 'none';
     panelOpen = false;
-
-    if (ball) {
-      var ballW = 46;
-      var ballH = 46;
-      var winW = window.innerWidth;
-      var winH = window.innerHeight;
-      var leftVal = state.settings.floatingBallLeft;
-      var topVal = state.settings.floatingBallTop;
-
-      if (!leftVal || !topVal) {
-        leftVal = (winW - ballW) + 'px';
-        topVal = '140px';
-      } else {
-        var curL = parseFloat(leftVal) || 0;
-        var curT = parseFloat(topVal) || 140;
-        curL = (curL + ballW / 2 < winW / 2) ? 0 : (winW - ballW);
-        curT = Math.max(10, Math.min(curT, winH - ballH - 10));
-        leftVal = curL + 'px';
-        topVal = curT + 'px';
-      }
-
-      ball.style.transition = 'left 0.28s cubic-bezier(0.25, 1, 0.5, 1), top 0.28s cubic-bezier(0.25, 1, 0.5, 1), transform 0.28s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.28s ease';
-      ball.style.left = leftVal;
-      ball.style.top = topVal;
-      ball.style.right = 'auto';
-      ball.style.bottom = 'auto';
-      ball.style.display = 'flex';
-      updateFloatBallUI();
-      updatePillOrientation(ball);
-      scheduleFloatBallAutoHide(ball);
-    }
+    FloatingBall.show();
   } else {
-    if (ball) {
-      cancelFloatBallAutoHide(ball);
-      ball.classList.remove('is-hovered', 'show-pill');
-      ball.style.display = 'none';
-    }
+    FloatingBall.hide();
     if (!panelOpen) {
       togglePanel();
     }
   }
-}
-
-function bindFloatBallEvents(ball) {
-  var isDragging = false;
-  var hasMoved = false;
-  var startX, startY;
-  var startLeft, startTop;
-
-  // Mini Hover Capsule Pill Buttons
-  var pillToggle = ball.querySelector('#fire-float-pill-toggle');
-  if (pillToggle) {
-    pillToggle.addEventListener('click', function(e) {
-      e.stopPropagation();
-      e.preventDefault();
-      togglePlayPause();
-    });
-  }
-
-  var pillNext = ball.querySelector('#fire-float-pill-next');
-  if (pillNext) {
-    pillNext.addEventListener('click', function(e) {
-      e.stopPropagation();
-      e.preventDefault();
-      playNext();
-    });
-  }
-
-  var pillExpand = ball.querySelector('#fire-float-pill-expand');
-  if (pillExpand) {
-    pillExpand.addEventListener('click', function(e) {
-      e.stopPropagation();
-      e.preventDefault();
-      minimizePlayer(false);
-    });
-  }
-
-  // Mini Hover Capsule Pill - Clicking song title area opens full player
-  var pillInfo = ball.querySelector('.fire-float-pill-info');
-  if (pillInfo) {
-    pillInfo.title = '点击展开播放器';
-    pillInfo.addEventListener('click', function(e) {
-      e.stopPropagation();
-      e.preventDefault();
-      minimizePlayer(false);
-    });
-  }
-
-  // Hover management with grace period for smooth desktop cursor transition
-  var ballHoverTimer = null;
-  ball.addEventListener('mouseenter', function() {
-    if (ballHoverTimer) {
-      clearTimeout(ballHoverTimer);
-      ballHoverTimer = null;
-    }
-    cancelFloatBallAutoHide(ball);
-    ball.classList.add('is-hovered');
-  });
-
-  ball.addEventListener('mouseleave', function(e) {
-    if (isDragging) return;
-    if (e.relatedTarget && ball.contains(e.relatedTarget)) return;
-
-    if (ballHoverTimer) clearTimeout(ballHoverTimer);
-    ballHoverTimer = setTimeout(function() {
-      ball.classList.remove('is-hovered');
-      scheduleFloatBallAutoHide(ball);
-    }, 350);
-  });
-
-  // Window resize listener
-  window.addEventListener('resize', function() {
-    if (ball && ball.style.display !== 'none' && !isDragging) {
-      var r = ball.getBoundingClientRect();
-      var w = r.width || 46;
-      if (r.left > window.innerWidth / 2) {
-        ball.style.left = (window.innerWidth - w) + 'px';
-        state.settings.floatingBallLeft = ball.style.left;
-        saveState();
-      }
-      updatePillOrientation(ball);
-      scheduleFloatBallAutoHide(ball);
-    }
-  });
-
-  var onDragEnd = function(currentLeft, currentTop) {
-    var r = ball.getBoundingClientRect();
-    var ballW = r.width || 46;
-    var ballH = r.height || 46;
-    var winW = window.innerWidth;
-    var winH = window.innerHeight;
-
-    // Snap to nearest edge (left or right)
-    var snapLeft = (currentLeft + ballW / 2 < winW / 2) ? 0 : (winW - ballW);
-    var snapTop = Math.max(10, Math.min(currentTop, winH - ballH - 10));
-
-    ball.classList.remove('dragging');
-    ball.style.transition = 'left 0.28s cubic-bezier(0.25, 1, 0.5, 1), top 0.28s cubic-bezier(0.25, 1, 0.5, 1), transform 0.28s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.28s ease';
-    ball.style.left = snapLeft + 'px';
-    ball.style.top = snapTop + 'px';
-    ball.style.right = 'auto';
-    ball.style.bottom = 'auto';
-
-    state.settings.floatingBallLeft = snapLeft + 'px';
-    state.settings.floatingBallTop = snapTop + 'px';
-    saveState();
-
-    updatePillOrientation(ball);
-    scheduleFloatBallAutoHide(ball);
-  };
-
-  ball.addEventListener('mousedown', function(e) {
-    if (e.target.closest('.fire-pill-btn') || e.target.closest('.fire-float-pill-info')) {
-      return;
-    }
-    if (ballHoverTimer) {
-      clearTimeout(ballHoverTimer);
-      ballHoverTimer = null;
-    }
-    cancelFloatBallAutoHide(ball);
-    ball.classList.remove('is-hovered');
-    ball.classList.add('dragging');
-    ball.style.transition = 'none';
-
-    isDragging = true;
-    hasMoved = false;
-    startX = e.clientX;
-    startY = e.clientY;
-
-    var rect = ball.getBoundingClientRect();
-    startLeft = rect.left;
-    startTop = rect.top;
-
-    var curLeft = startLeft;
-    var curTop = startTop;
-
-    var onMouseMove = function(e) {
-      if (!isDragging) return;
-      var dx = e.clientX - startX;
-      var dy = e.clientY - startY;
-      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
-        hasMoved = true;
-      }
-      var newLeft = startLeft + dx;
-      var newTop = startTop + dy;
-      var r = ball.getBoundingClientRect();
-      newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - r.width));
-      newTop = Math.max(0, Math.min(newTop, window.innerHeight - r.height));
-
-      curLeft = newLeft;
-      curTop = newTop;
-      ball.style.left = newLeft + 'px';
-      ball.style.top = newTop + 'px';
-      ball.style.right = 'auto';
-      ball.style.bottom = 'auto';
-
-      updatePillOrientation(ball);
-    };
-
-    var onMouseUp = function() {
-      if (!isDragging) return;
-      isDragging = false;
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-
-      if (hasMoved) {
-        onDragEnd(curLeft, curTop);
-      } else {
-        ball.classList.remove('dragging');
-        scheduleFloatBallAutoHide(ball);
-      }
-    };
-
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-    e.preventDefault();
-  });
-
-  ball.addEventListener('touchstart', function(e) {
-    if (e.target.closest('.fire-pill-btn') || e.target.closest('.fire-float-pill-info')) {
-      return;
-    }
-    if (ballHoverTimer) {
-      clearTimeout(ballHoverTimer);
-      ballHoverTimer = null;
-    }
-    cancelFloatBallAutoHide(ball);
-    ball.classList.remove('is-hovered');
-    ball.classList.add('dragging');
-    ball.style.transition = 'none';
-
-    var touch = e.touches[0];
-    isDragging = true;
-    hasMoved = false;
-    startX = touch.clientX;
-    startY = touch.clientY;
-
-    var rect = ball.getBoundingClientRect();
-    startLeft = rect.left;
-    startTop = rect.top;
-
-    var curLeft = startLeft;
-    var curTop = startTop;
-
-    var onTouchMove = function(e) {
-      if (!isDragging) return;
-      var t = e.touches[0];
-      var dx = t.clientX - startX;
-      var dy = t.clientY - startY;
-      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
-        hasMoved = true;
-      }
-      var newLeft = startLeft + dx;
-      var newTop = startTop + dy;
-      var r = ball.getBoundingClientRect();
-      newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - r.width));
-      newTop = Math.max(0, Math.min(newTop, window.innerHeight - r.height));
-
-      curLeft = newLeft;
-      curTop = newTop;
-      ball.style.left = newLeft + 'px';
-      ball.style.top = newTop + 'px';
-      ball.style.right = 'auto';
-      ball.style.bottom = 'auto';
-
-      updatePillOrientation(ball);
-      if (e.cancelable) e.preventDefault();
-    };
-
-    var onTouchEnd = function() {
-      if (!isDragging) return;
-      isDragging = false;
-      document.removeEventListener('touchmove', onTouchMove);
-      document.removeEventListener('touchend', onTouchEnd);
-
-      if (hasMoved) {
-        onDragEnd(curLeft, curTop);
-      } else {
-        ball.classList.remove('dragging');
-        scheduleFloatBallAutoHide(ball);
-      }
-    };
-
-    document.addEventListener('touchmove', onTouchMove, { passive: false });
-    document.addEventListener('touchend', onTouchEnd);
-  }, { passive: true });
-
-  ball.addEventListener('click', function(e) {
-    if (e.target.closest('.fire-pill-btn') || e.target.closest('.fire-float-pill-info')) {
-      return;
-    }
-    if (hasMoved) {
-      e.stopPropagation();
-      e.preventDefault();
-      hasMoved = false;
-      return;
-    }
-
-    // Touch / Mobile friendly: First tap unfolds control pill, second tap or expand button opens full player
-    var isTouch = (('ontouchstart' in window) || (navigator.maxTouchPoints > 0)) && (e.pointerType !== 'mouse');
-    if (isTouch) {
-      if (!ball.classList.contains('show-pill')) {
-        e.stopPropagation();
-        ball.classList.add('show-pill');
-        cancelFloatBallAutoHide(ball);
-
-        var dismissPill = function(ev) {
-          if (!ball.contains(ev.target)) {
-            ball.classList.remove('show-pill');
-            document.removeEventListener('touchstart', dismissPill);
-            document.removeEventListener('click', dismissPill);
-            scheduleFloatBallAutoHide(ball);
-          }
-        };
-        setTimeout(function() {
-          document.addEventListener('touchstart', dismissPill, { passive: true });
-          document.addEventListener('click', dismissPill);
-        }, 100);
-        return;
-      }
-    }
-
-    ball.classList.remove('show-pill', 'is-hovered');
-    minimizePlayer(false);
-  });
 }
 
 function bindPanelDrag(panel, header) {

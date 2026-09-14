@@ -353,7 +353,7 @@
     display: block;
 }
 
-/* ─── Simplified Floating Ball (跟随酒馆主题 & 贴边自动隐藏) ──────────── */
+/* ─── FIRE Floating Action Ball (纯黑胶碟片磁吸贴边半隐藏悬浮球 - 参考 Zero) ─── */
 
 @keyframes fire-ball-spin {
     from { transform: rotate(0deg); }
@@ -362,60 +362,91 @@
 
 .fire-float-ball {
     position: fixed;
-    width: 46px;
-    height: 46px;
+    width: 42px;
+    height: 42px;
     z-index: 100006;
+    border-radius: 50%;
+    background: var(--fire-bg-opaque, var(--SmartThemeBlurTintColor, rgba(24, 24, 32, 0.88)));
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1.5px solid var(--fire-accent, var(--SmartThemeQuoteColor, #a855f7));
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.42), 0 0 12px rgba(168, 85, 247, 0.22);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: grab;
     user-select: none;
+    -webkit-user-select: none;
     touch-action: none;
-    cursor: pointer;
-    transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.3s ease, box-shadow 0.3s ease;
+    transition: transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1), opacity 0.2s ease, box-shadow 0.2s ease;
 }
 
-/* 贴边半隐藏状态 (Docked & Auto-hidden into screen edge) */
-.fire-float-ball.docked-left {
-    transform: translateX(-55%);
-    opacity: 0.45;
-}
-
-.fire-float-ball.docked-right {
-    transform: translateX(55%);
-    opacity: 0.45;
-}
-
-/* 鼠标悬停、触摸或拖拽时立即弹回完整显示 */
 .fire-float-ball:hover,
-.fire-float-ball.is-hovered,
-.fire-float-ball.show-pill,
-.fire-float-ball:focus-within,
-.fire-float-ball.dragging,
-.fire-float-ball.docked-left:hover,
-.fire-float-ball.docked-left.is-hovered,
-.fire-float-ball.docked-left.show-pill,
+.fire-float-ball:active {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.52), 0 0 16px rgba(168, 85, 247, 0.38);
+}
+
+/* ── 拖拽高灵敏手感提升 ── */
+.fire-float-ball.is-dragging,
+.fire-float-ball.dragging {
+    cursor: grabbing !important;
+    transform: scale(1.08) translate3d(0, 0, 0) !important;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(168, 85, 247, 0.45) !important;
+    opacity: 0.95 !important;
+    transition: none !important;
+}
+
+.fire-float-ball.is-dragging .fire-float-pill,
+.fire-float-ball.dragging .fire-float-pill {
+    display: none !important;
+}
+
+/* ── 贴边半隐藏态 (Docked Edge Half-Hide - 纯 CSS 硬件加速) ── */
+.fire-float-ball.docked-right {
+    transform: translate3d(50%, 0, 0);
+    opacity: 0.68;
+}
+
 .fire-float-ball.docked-right:hover,
-.fire-float-ball.docked-right.is-hovered,
-.fire-float-ball.docked-right.show-pill {
-    transform: translateX(0) scale(1.05);
+.fire-float-ball.docked-right:active,
+.fire-float-ball.docked-right.show-pill,
+.fire-float-ball.docked-right.is-hovered {
+    transform: translate3d(0, 0, 0);
     opacity: 1;
 }
 
-.fire-float-ball:active {
-    transform: translateX(0) scale(0.95);
+.fire-float-ball.docked-left {
+    transform: translate3d(-50%, 0, 0);
+    opacity: 0.68;
 }
 
-/* 球体本体：完全顺应酒馆主题配色 */
+.fire-float-ball.docked-left:hover,
+.fire-float-ball.docked-left:active,
+.fire-float-ball.docked-left.show-pill,
+.fire-float-ball.docked-left.is-hovered {
+    transform: translate3d(0, 0, 0);
+    opacity: 1;
+}
+
+/* ── 用户关闭贴边半隐藏开关时的样式 ── */
+.fire-float-ball.no-autohide.docked-right,
+.fire-float-ball.no-autohide.docked-left {
+    transform: translate3d(0, 0, 0) !important;
+    opacity: 0.92 !important;
+}
+
+/* ── 球体本体与黑胶碟片 ── */
 .fire-float-ball-inner {
     position: relative;
-    width: 46px;
-    height: 46px;
+    width: 100%;
+    height: 100%;
     border-radius: 50%;
-    background: var(--fire-bg-opaque, var(--SmartThemeBlurTintColor, #1e1e24));
-    border: 2px solid var(--fire-accent, #a855f7);
     display: flex;
     align-items: center;
     justify-content: center;
     overflow: hidden;
     box-sizing: border-box;
-    transition: border-color 0.2s;
+    pointer-events: none;
 }
 
 /* 封面旋转 */
@@ -442,8 +473,8 @@
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     background: var(--fire-bg-opaque, var(--SmartThemeBlurTintColor, #1e1e24));
     border: 1.5px solid var(--fire-accent, #a855f7);
@@ -453,10 +484,14 @@
 
 /* 无封面时居中精致音乐图标 */
 .fire-float-ball-icon {
-    font-size: 18px;
-    color: var(--fire-accent, #a855f7);
-    transition: transform 0.2s;
+    font-size: 16px;
+    color: var(--fire-accent, var(--SmartThemeQuoteColor, #a855f7));
+    transition: transform 0.2s ease, color 0.15s;
     z-index: 1;
+}
+
+.fire-float-ball:hover .fire-float-ball-icon {
+    transform: scale(1.08);
 }
 
 /* 无封面且播放中时居中跳动律动音浪（3-Bar Equalizer） */
@@ -465,15 +500,15 @@
     align-items: center;
     justify-content: center;
     gap: 2.5px;
-    height: 18px;
+    height: 16px;
     z-index: 1;
 }
 
 .fire-float-wave span {
     display: block;
     width: 2.5px;
-    height: 14px;
-    background: var(--fire-accent, #a855f7);
+    height: 12px;
+    background: var(--fire-accent, var(--SmartThemeQuoteColor, #a855f7));
     border-radius: 2px;
 }
 
@@ -490,39 +525,40 @@
 }
 
 @keyframes fire-bar-bounce {
-    0% { height: 4px; }
-    100% { height: 16px; }
+    0% { height: 3px; }
+    100% { height: 14px; }
 }
 
-/* 悬停信息胶囊（Pill）- 顺应酒馆主题 */
+/* ── 悬停信息胶囊（Pill）── */
 .fire-float-pill {
     position: absolute;
     top: 50%;
     transform: translateY(-50%) scale(0.95);
-    height: 40px;
-    background: var(--fire-bg-opaque, var(--SmartThemeBlurTintColor, #1e1e24));
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid var(--fire-border, rgba(128, 128, 128, 0.2));
-    border-radius: 20px;
+    height: 38px;
+    background: var(--fire-bg-opaque, var(--SmartThemeBlurTintColor, rgba(20, 20, 28, 0.95)));
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--fire-border, rgba(128, 128, 128, 0.25));
+    border-radius: 19px;
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 0 12px;
+    padding: 0 10px 0 12px;
     white-space: nowrap;
     pointer-events: none;
     opacity: 0;
-    transition: opacity 0.2s ease, transform 0.2s ease;
-    z-index: 10;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1);
+    z-index: 100007;
 }
 
 .fire-float-pill.pill-left {
-    right: calc(100% + 6px);
+    right: calc(100% + 8px);
     left: auto;
 }
 
 .fire-float-pill.pill-right {
-    left: calc(100% + 6px);
+    left: calc(100% + 8px);
     right: auto;
 }
 
@@ -536,13 +572,13 @@
 }
 
 .fire-float-pill.pill-right::before {
-    left: -18px;
-    width: 24px;
+    left: -20px;
+    width: 26px;
 }
 
 .fire-float-pill.pill-left::before {
-    right: -18px;
-    width: 24px;
+    right: -20px;
+    width: 26px;
 }
 
 .fire-float-ball:hover .fire-float-pill,
@@ -610,6 +646,19 @@
 
 .fire-pill-btn:active {
     transform: scale(0.92);
+}
+
+@media (max-width: 768px) {
+    .fire-float-ball {
+        width: 38px;
+        height: 38px;
+    }
+    .fire-float-ball-icon {
+        font-size: 14px;
+    }
+    .fire-float-pill {
+        height: 34px;
+    }
 }
 
 /* ─── Status Bar Avoidance (Mobile & Fullscreen) ─── */
@@ -1901,6 +1950,7 @@
     justify-content: space-between;
     padding: 8px 12px;
     border-bottom: 1px solid var(--fire-border, rgba(255,255,255,0.1));
+    flex-shrink: 0;
 }
 
 .fire-discover-title {
@@ -1915,7 +1965,8 @@
     gap: 10px;
     padding: 10px;
     overflow-y: auto;
-    max-height: calc(100% - 40px);
+    flex: 1;
+    min-height: 0;
 }
 
 .fire-chart-card {
@@ -2397,6 +2448,7 @@
     border-radius: 8px;
     border: 1px solid var(--fire-border, rgba(128, 128, 128, 0.15));
     margin-bottom: 8px;
+    flex-shrink: 0;
 }
 
 .fire-discover-subtab-btn {
@@ -2435,10 +2487,16 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 2px 2px 8px 2px;
+    padding: 8px 4px 6px 4px;
     overflow-x: auto;
+    overflow-y: hidden;
     white-space: nowrap;
     scrollbar-width: none;
+    flex-shrink: 0;
+    height: auto;
+    min-height: 38px;
+    box-sizing: border-box;
+    touch-action: pan-x;
 }
 
 .fire-discover-cat-bar::-webkit-scrollbar {
@@ -2448,9 +2506,11 @@
 .fire-discover-cat-chip {
     display: inline-flex;
     align-items: center;
-    padding: 3px 10px;
+    justify-content: center;
+    padding: 4px 12px;
     border-radius: 999px;
     font-size: 11px;
+    line-height: 1.2;
     background: transparent;
     border: 1px solid var(--fire-border, rgba(128, 128, 128, 0.2));
     color: var(--fire-text, #fff);
@@ -2458,6 +2518,10 @@
     user-select: none;
     transition: background 0.2s, border-color 0.2s, color 0.2s;
     flex-shrink: 0;
+    height: auto;
+    min-height: 24px;
+    box-sizing: border-box;
+    white-space: nowrap;
 }
 
 .fire-discover-cat-chip:hover {
