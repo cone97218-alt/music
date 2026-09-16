@@ -129,6 +129,31 @@
     transform: translateY(100%) !important;
     opacity: 0 !important;
     pointer-events: none !important;
+
+    /* Hard isolation: ensure fullscreen always has standard desktop proportions */
+    --fire-scale: 1 !important;
+    --fire-cd-size: 240px !important;
+    --fire-btn-size: 36px !important;
+    --fire-play-btn-size: 46px !important;
+    --fire-btn-font-size: 16px !important;
+    --fire-play-btn-font-size: 20px !important;
+    --fire-ctrl-gap: 16px !important;
+    --fire-ctrl-margin: 16px !important;
+    --fire-progress-margin: 16px !important;
+    --fire-volume-margin: 16px !important;
+    --fire-meta-margin: 12px !important;
+    --fire-title-size: 16px !important;
+    --fire-artist-size: 13px !important;
+    --fire-player-padding: 20px !important;
+    --fire-settings-w: 280px !important;
+    --fire-header-padding: calc(14px + var(--fire-status-bar-inset, 0px)) 20px 14px 20px !important;
+    --fire-header-btn-size: 32px !important;
+    --fire-header-btn-font-size: 16px !important;
+    --fire-header-gap: 12px !important;
+    --fire-header-title-size: 16px !important;
+    --fire-header-h: 60px !important;
+    --fire-tabs-padding: 12px !important;
+    --fire-tabs-font-size: 16px !important;
 }
 #fire-panel.fire-fullscreen.fire-open {
     transform: translateY(0) !important;
@@ -372,7 +397,8 @@
     border-right: none !important;
     width: 100% !important;
     flex: 1 !important;
-    overflow: hidden !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
 }
 #fire-panel.fire-compact .fire-tabs-column {
     width: 100% !important;
@@ -821,7 +847,7 @@
     position: absolute;
     top: var(--fire-header-h, calc(55px + var(--fire-status-bar-inset, 0px)));
     right: 10px;
-    width: 280px;
+    width: min(var(--fire-settings-w, 280px), calc(100% - 20px));
     max-width: calc(100% - 20px);
     background: var(--fire-bg-opaque, var(--SmartThemeBlurTintColor, #1f2937)) !important;
     border: 1px solid var(--fire-border);
@@ -831,7 +857,7 @@
     display: none;
     padding: 12px;
     box-sizing: border-box;
-    max-height: calc(80vh - var(--fire-status-bar-inset, 0px));
+    max-height: calc(100% - var(--fire-header-h, 55px) - 15px);
     overflow-y: auto;
     overflow-x: hidden;
     touch-action: pan-y;
@@ -982,10 +1008,11 @@
 /* Album Art / Spin CD */
 .fire-cd-wrapper {
     position: relative;
-    width: min(var(--fire-cd-size, 240px), 100%, calc(100% - 16px));
+    width: var(--fire-cd-size, 240px);
+    height: var(--fire-cd-size, 240px);
+    max-width: min(var(--fire-cd-size, 240px), 100%, calc(100% - 16px));
     max-height: min(var(--fire-cd-size, 240px), 100%);
     aspect-ratio: 1 / 1;
-    height: auto;
     margin: 0 auto var(--fire-ctrl-margin, 20px) auto;
     flex-shrink: 1;
     min-height: 0;

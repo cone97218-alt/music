@@ -3198,15 +3198,15 @@ function bindUIEvents() {
   if (mainPanel && mainHeader) bindPanelDrag(mainPanel, mainHeader);
   if (mainPanel && mainResizeHandle) bindPanelResize(mainPanel, mainResizeHandle);
 
-  // ResizeObserver for Floating Window fluid scaling
+  // ResizeObserver for universal panel fluid scaling (floating, modal, drawers)
   if (window.ResizeObserver && mainPanel) {
     try {
       var panelRO = new ResizeObserver(function(entries) {
-        if (state.settings.displayMode !== 'floating') return;
+        if (state.settings.displayMode === 'fullscreen') return;
         for (var entry of entries) {
           var cr = entry.contentRect;
           if (cr && cr.width > 0 && cr.height > 0) {
-            updateFloatingScale(mainPanel, cr.width, cr.height);
+            updatePanelScale(mainPanel, cr.width, cr.height);
           }
         }
       });
@@ -6862,14 +6862,60 @@ function bindPanelDrag(panel, header) {
   }, { passive: true });
 }
 
-// ─── Floating Window Dynamic Scale & Proportion Manager ─────────────────────────
-function updateFloatingScale(panel, w, h) {
+// ─── Universal Container Dynamic Scale & Proportion Manager ─────────────────────────
+function updatePanelScale(panel, targetW, targetH) {
   if (!panel) return;
-  w = Math.round(w || panel.offsetWidth || 700);
-  h = Math.round(h || panel.offsetHeight || 520);
+  var mode = state.settings.displayMode || 'modal';
 
-  // Compact layout toggle (< 580px width switches to single-column tabbed view)
-  var isCompact = w < 580;
+  var floatingVars = [
+    '--fire-scale', '--fire-cd-size', '--fire-btn-size', '--fire-play-btn-size',
+    '--fire-btn-font-size', '--fire-play-btn-font-size', '--fire-ctrl-gap',
+    '--fire-ctrl-margin', '--fire-progress-margin', '--fire-volume-margin',
+    '--fire-meta-margin', '--fire-title-size', '--fire-artist-size',
+    '--fire-player-padding', '--fire-settings-w', '--fire-header-padding',
+    '--fire-header-btn-size', '--fire-header-btn-font-size', '--fire-header-gap',
+    '--fire-header-title-size', '--fire-header-h', '--fire-tabs-padding',
+    '--fire-tabs-font-size'
+  ];
+
+  // 1. Fullscreen mode: NEVER scale down, ensure 100% clean baseline
+  if (mode === 'fullscreen') {
+    floatingVars.forEach(function(v) { panel.style.removeProperty(v); });
+    panel.classList.remove('fire-compact');
+    return;
+  }
+
+  // 2. Measure actual dimensions
+  var w = Math.round(targetW || panel.offsetWidth || 0);
+  var h = Math.round(targetH || panel.offsetHeight || 0);
+
+  // Fallback estimates if panel is not yet rendered in DOM or display:none
+  if (!w || !h) {
+    if (mode === 'floating') {
+      w = state.settings.floatingWidth || 700;
+      h = state.settings.floatingHeight || 520;
+    } else if (mode === 'drawer-left' || mode === 'drawer-right' || mode === 'qr-left' || mode === 'qr-right') {
+      var dRatio = (state.settings.drawerRatio || 45) / 100;
+      w = Math.round(window.innerWidth * dRatio);
+      h = window.innerHeight;
+    } else if (mode === 'drawer-top' || mode === 'drawer-bottom' || mode === 'qr-top' || mode === 'qr-bottom') {
+      var dRatioH = (state.settings.drawerRatio || 70) / 100;
+      w = Math.min(860, Math.round(window.innerWidth * 0.95));
+      h = Math.round(window.innerHeight * dRatioH);
+    } else {
+      // modal
+      var mW = (state.settings.modalWidthRatio || 80) / 100;
+      var mH = (state.settings.modalHeightRatio || 70) / 100;
+      w = Math.min(860, Math.round(window.innerWidth * mW));
+      h = Math.min(600, Math.round(window.innerHeight * mH));
+    }
+  }
+
+  var isLeftRightDrawer = (mode === 'drawer-left' || mode === 'drawer-right' || mode === 'qr-left' || mode === 'qr-right');
+
+  // 3. Compact mode decision
+  // Left/Right drawer has its own native vertical stack (player on top, tabs on bottom), so never force fire-compact
+  var isCompact = !isLeftRightDrawer && (w < 580);
   var hadCompact = panel.classList.contains('fire-compact');
   if (isCompact !== hadCompact) {
     if (isCompact) {
@@ -6883,9 +6929,9 @@ function updateFloatingScale(panel, w, h) {
     updateTabUI();
   }
 
-  // Calculate proportional scaling factors
-  var baseW = isCompact ? 380 : 700;
-  var baseH = 520;
+  // 4. Calculate proportional scaling factors
+  var baseW = isCompact ? 380 : (isLeftRightDrawer ? 420 : 700);
+  var baseH = isLeftRightDrawer ? 650 : 520;
   var sW = Math.max(0.72, Math.min(1.25, w / baseW));
   var sH = Math.max(0.72, Math.min(1.25, h / baseH));
   var s = Math.min(sW, sH);
@@ -6897,8 +6943,8 @@ function updateFloatingScale(panel, w, h) {
   var ratioH = (sH - 0.72) / (1.25 - 0.72);
 
   // Calculate adaptive sizes
-  var btnSize = lerp(28, 42, ratio);
-  var playBtnSize = lerp(36, 52, ratio);
+  var btnSize = lerp(28, 40, ratio);
+  var playBtnSize = lerp(36, 50, ratio);
   var btnFontSize = lerp(13, 18, ratio);
   var playBtnFontSize = lerp(16, 22, ratio);
   var ctrlGap = lerp(8, 20, ratio);
@@ -6924,9 +6970,16 @@ function updateFloatingScale(panel, w, h) {
   var headerH = (h < 460 || w < 400) ? 38 : ((h < 560 || w < 540) ? 46 : 56);
 
   // CD diameter: ensure it never overflows available vertical & horizontal space
-  var availCDH = isCompact ? Math.max(90, h - (headerH + 210)) : Math.max(120, h - (headerH + 190));
-  var availCDW = isCompact ? (w - 40) : Math.min(300, Math.round(w * 0.42));
-  var cdSize = Math.max(90, Math.min(250, Math.min(availCDH, availCDW)));
+  var cdSize;
+  if (isLeftRightDrawer) {
+    // Left/Right drawer: vertical space is ample (100vh), width is the primary constraint
+    cdSize = Math.max(150, Math.min(240, w - 80));
+  } else {
+    // Floating, Modal, Top/Bottom Drawer: height is often the critical constraint
+    var availCDH = isCompact ? Math.max(90, h - (headerH + 210)) : Math.max(120, h - (headerH + 190));
+    var availCDW = isCompact ? (w - 40) : Math.min(260, Math.round(w * 0.42));
+    cdSize = Math.max(90, Math.min(240, Math.min(availCDH, availCDW)));
+  }
 
   // Set CSS Custom Properties on panel
   panel.style.setProperty('--fire-scale', s.toFixed(2));
@@ -6952,6 +7005,11 @@ function updateFloatingScale(panel, w, h) {
   panel.style.setProperty('--fire-header-h', headerH + 'px');
   panel.style.setProperty('--fire-tabs-padding', tabsPadding);
   panel.style.setProperty('--fire-tabs-font-size', tabsFontSize + 'px');
+}
+
+// Backward-compatible alias
+function updateFloatingScale(panel, w, h) {
+  updatePanelScale(panel, w, h);
 }
 
 function bindPanelResize(panel, handle) {
@@ -7173,14 +7231,19 @@ function applyDisplayMode() {
 
   if (mode === 'fullscreen') {
     panel.classList.add('fire-fullscreen');
+    updatePanelScale(panel);
   } else if (mode === 'drawer-top' || mode === 'qr-top') {
     panel.classList.add('fire-drawer-top', 'fire-qr-top');
+    updatePanelScale(panel);
   } else if (mode === 'drawer-bottom' || mode === 'qr-bottom') {
     panel.classList.add('fire-drawer-bottom', 'fire-qr-bottom');
+    updatePanelScale(panel);
   } else if (mode === 'drawer-left' || mode === 'qr-left') {
     panel.classList.add('fire-drawer-left', 'fire-qr-left');
+    updatePanelScale(panel);
   } else if (mode === 'drawer-right' || mode === 'qr-right') {
     panel.classList.add('fire-drawer-right', 'fire-qr-right');
+    updatePanelScale(panel);
   } else if (mode === 'floating') {
     panel.classList.add('fire-floating');
     var fw = state.settings.floatingWidth || 700;
@@ -7201,15 +7264,11 @@ function applyDisplayMode() {
     }
     panel.style.setProperty('left', leftVal, 'important');
     panel.style.setProperty('top', topVal, 'important');
-    updateFloatingScale(panel, fw, fh);
+    updatePanelScale(panel, fw, fh);
   } else {
     // Default 'modal'
-    panel.classList.remove('fire-compact');
     panel.classList.add('fire-modal');
-  }
-
-  if (mode !== 'floating') {
-    panel.classList.remove('fire-compact');
+    updatePanelScale(panel);
   }
 
   if (minimizeBtn) {
