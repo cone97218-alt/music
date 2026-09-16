@@ -672,8 +672,9 @@ async function playSong(song) {
   }
   pendingStartVal = startVal;
 
-  // On mobile, auto-switch to Now Playing tab when playing a song
-  var isMobile = (window.parent || window).innerWidth <= 760;
+  // On mobile or compact mode, auto-switch to Now Playing tab when playing a song
+  var panelElem = getDoc().getElementById('fire-panel');
+  var isMobile = (panelElem && panelElem.classList.contains('fire-compact')) || ((window.parent || window).innerWidth <= 760);
   if (isMobile) {
     switchTab('nowplaying');
   }
@@ -3197,6 +3198,22 @@ function bindUIEvents() {
   if (mainPanel && mainHeader) bindPanelDrag(mainPanel, mainHeader);
   if (mainPanel && mainResizeHandle) bindPanelResize(mainPanel, mainResizeHandle);
 
+  // ResizeObserver for Floating Window fluid scaling
+  if (window.ResizeObserver && mainPanel) {
+    try {
+      var panelRO = new ResizeObserver(function(entries) {
+        if (state.settings.displayMode !== 'floating') return;
+        for (var entry of entries) {
+          var cr = entry.contentRect;
+          if (cr && cr.width > 0 && cr.height > 0) {
+            updateFloatingScale(mainPanel, cr.width, cr.height);
+          }
+        }
+      });
+      panelRO.observe(mainPanel);
+    } catch (e) {}
+  }
+
   // Settings Gear Dropdown Toggle
   var settingsBtn = doc.getElementById('fire-settings-toggle');
   var settingsDropdown = doc.getElementById('fire-settings-dropdown');
@@ -4414,7 +4431,8 @@ function updateTabUI() {
     if (tabDiscover) tabDiscover.classList.add('active');
   }
 
-  var isMobile = (window.parent || window).innerWidth <= 760;
+  var panel = doc.getElementById('fire-panel');
+  var isMobile = (panel && panel.classList.contains('fire-compact')) || ((window.parent || window).innerWidth <= 760);
 
   if (isMobile) {
     if (activeTab === 'nowplaying') {
@@ -6844,10 +6862,85 @@ function bindPanelDrag(panel, header) {
   }, { passive: true });
 }
 
+// ─── Floating Window Dynamic Scale & Proportion Manager ─────────────────────────
+function updateFloatingScale(panel, w, h) {
+  if (!panel) return;
+  w = Math.round(w || panel.offsetWidth || 700);
+  h = Math.round(h || panel.offsetHeight || 520);
+
+  // Compact layout toggle (< 580px width switches to single-column tabbed view)
+  var isCompact = w < 580;
+  var hadCompact = panel.classList.contains('fire-compact');
+  if (isCompact !== hadCompact) {
+    if (isCompact) {
+      panel.classList.add('fire-compact');
+    } else {
+      panel.classList.remove('fire-compact');
+      if (activeTab === 'nowplaying') {
+        activeTab = 'search';
+      }
+    }
+    updateTabUI();
+  }
+
+  // Calculate proportional scaling factors
+  var baseW = isCompact ? 380 : 700;
+  var baseH = 520;
+  var sW = Math.max(0.72, Math.min(1.25, w / baseW));
+  var sH = Math.max(0.72, Math.min(1.25, h / baseH));
+  var s = Math.min(sW, sH);
+
+  var lerp = function(minVal, maxVal, ratio) {
+    return Math.round(minVal + (maxVal - minVal) * Math.max(0, Math.min(1, ratio)));
+  };
+  var ratio = (s - 0.72) / (1.25 - 0.72);
+  var ratioH = (sH - 0.72) / (1.25 - 0.72);
+
+  // Calculate adaptive sizes
+  var btnSize = lerp(28, 42, ratio);
+  var playBtnSize = lerp(36, 52, ratio);
+  var btnFontSize = lerp(13, 18, ratio);
+  var playBtnFontSize = lerp(16, 22, ratio);
+  var ctrlGap = lerp(8, 20, ratio);
+  var ctrlMargin = lerp(6, 18, ratioH);
+  var progressMargin = lerp(6, 16, ratioH);
+  var volumeMargin = lerp(4, 16, ratioH);
+  var metaMargin = lerp(4, 14, ratioH);
+  var titleSize = lerp(13, 18, ratio);
+  var artistSize = lerp(11, 14, ratio);
+  var settingsW = Math.max(220, Math.min(320, Math.round(w * 0.75)));
+
+  // Player padding: compact on shorter or narrower windows
+  var playerPadding = (h < 460 || w < 400) ? '8px 12px' : ((h < 560 || w < 540) ? '12px 16px' : '20px');
+
+  // CD diameter: ensure it never overflows available vertical & horizontal space
+  var availCDH = isCompact ? Math.max(90, h - 260) : Math.max(120, h - 230);
+  var availCDW = isCompact ? (w - 40) : Math.min(300, Math.round(w * 0.42));
+  var cdSize = Math.max(90, Math.min(250, Math.min(availCDH, availCDW)));
+
+  // Set CSS Custom Properties on panel
+  panel.style.setProperty('--fire-scale', s.toFixed(2));
+  panel.style.setProperty('--fire-cd-size', cdSize + 'px');
+  panel.style.setProperty('--fire-btn-size', btnSize + 'px');
+  panel.style.setProperty('--fire-play-btn-size', playBtnSize + 'px');
+  panel.style.setProperty('--fire-btn-font-size', btnFontSize + 'px');
+  panel.style.setProperty('--fire-play-btn-font-size', playBtnFontSize + 'px');
+  panel.style.setProperty('--fire-ctrl-gap', ctrlGap + 'px');
+  panel.style.setProperty('--fire-ctrl-margin', ctrlMargin + 'px');
+  panel.style.setProperty('--fire-progress-margin', progressMargin + 'px');
+  panel.style.setProperty('--fire-volume-margin', volumeMargin + 'px');
+  panel.style.setProperty('--fire-meta-margin', metaMargin + 'px');
+  panel.style.setProperty('--fire-title-size', titleSize + 'px');
+  panel.style.setProperty('--fire-artist-size', artistSize + 'px');
+  panel.style.setProperty('--fire-player-padding', playerPadding);
+  panel.style.setProperty('--fire-settings-w', settingsW + 'px');
+}
+
 function bindPanelResize(panel, handle) {
   var isResizing = false;
   var startX, startY;
   var startW, startH;
+  var rafId = null;
 
   handle.addEventListener('mousedown', function(e) {
     if (state.settings.displayMode !== 'floating') return;
@@ -6862,21 +6955,35 @@ function bindPanelResize(panel, handle) {
       var dx = e.clientX - startX;
       var dy = e.clientY - startY;
 
-      var newW = Math.max(360, Math.min(startW + dx, window.innerWidth - panel.offsetLeft - 10));
-      var newH = Math.max(400, Math.min(startH + dy, window.innerHeight - panel.offsetTop - 10));
+      var newW = Math.max(320, Math.min(startW + dx, window.innerWidth - panel.offsetLeft - 10));
+      var newH = Math.max(380, Math.min(startH + dy, window.innerHeight - panel.offsetTop - 10));
 
       panel.style.setProperty('width', newW + 'px', 'important');
       panel.style.setProperty('height', newH + 'px', 'important');
+
+      if (!rafId) {
+        rafId = requestAnimationFrame(function() {
+          updateFloatingScale(panel, newW, newH);
+          rafId = null;
+        });
+      }
     };
 
     var onMouseUp = function() {
       if (!isResizing) return;
       isResizing = false;
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
 
-      state.settings.floatingWidth = parseInt(panel.style.width, 10);
-      state.settings.floatingHeight = parseInt(panel.style.height, 10);
+      var finalW = parseInt(panel.style.width, 10);
+      var finalH = parseInt(panel.style.height, 10);
+      state.settings.floatingWidth = finalW;
+      state.settings.floatingHeight = finalH;
+      updateFloatingScale(panel, finalW, finalH);
       saveState();
     };
 
@@ -6901,22 +7008,36 @@ function bindPanelResize(panel, handle) {
       var dx = t.clientX - startX;
       var dy = t.clientY - startY;
 
-      var newW = Math.max(360, Math.min(startW + dx, window.innerWidth - panel.offsetLeft - 10));
-      var newH = Math.max(400, Math.min(startH + dy, window.innerHeight - panel.offsetTop - 10));
+      var newW = Math.max(320, Math.min(startW + dx, window.innerWidth - panel.offsetLeft - 10));
+      var newH = Math.max(380, Math.min(startH + dy, window.innerHeight - panel.offsetTop - 10));
 
       panel.style.setProperty('width', newW + 'px', 'important');
       panel.style.setProperty('height', newH + 'px', 'important');
+
+      if (!rafId) {
+        rafId = requestAnimationFrame(function() {
+          updateFloatingScale(panel, newW, newH);
+          rafId = null;
+        });
+      }
       if (e.cancelable) e.preventDefault();
     };
 
     var onTouchEnd = function() {
       if (!isResizing) return;
       isResizing = false;
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
       document.removeEventListener('touchmove', onTouchMove);
       document.removeEventListener('touchend', onTouchEnd);
 
-      state.settings.floatingWidth = parseInt(panel.style.width, 10);
-      state.settings.floatingHeight = parseInt(panel.style.height, 10);
+      var finalW = parseInt(panel.style.width, 10);
+      var finalH = parseInt(panel.style.height, 10);
+      state.settings.floatingWidth = finalW;
+      state.settings.floatingHeight = finalH;
+      updateFloatingScale(panel, finalW, finalH);
       saveState();
     };
 
@@ -7044,8 +7165,10 @@ function applyDisplayMode() {
     panel.classList.add('fire-drawer-right', 'fire-qr-right');
   } else if (mode === 'floating') {
     panel.classList.add('fire-floating');
-    panel.style.setProperty('width', (state.settings.floatingWidth || 700) + 'px', 'important');
-    panel.style.setProperty('height', (state.settings.floatingHeight || 520) + 'px', 'important');
+    var fw = state.settings.floatingWidth || 700;
+    var fh = state.settings.floatingHeight || 520;
+    panel.style.setProperty('width', fw + 'px', 'important');
+    panel.style.setProperty('height', fh + 'px', 'important');
     panel.style.setProperty('right', 'auto', 'important');
     panel.style.setProperty('bottom', 'auto', 'important');
     panel.style.setProperty('transform', 'none', 'important');
@@ -7055,16 +7178,20 @@ function applyDisplayMode() {
       leftVal = state.settings.floatingLeft;
       topVal = state.settings.floatingTop;
     } else {
-      var w = state.settings.floatingWidth || 700;
-      var h = state.settings.floatingHeight || 520;
-      leftVal = Math.max(10, Math.round((window.innerWidth - w) / 2)) + 'px';
-      topVal = Math.max(10, Math.round((window.innerHeight - h) / 2)) + 'px';
+      leftVal = Math.max(10, Math.round((window.innerWidth - fw) / 2)) + 'px';
+      topVal = Math.max(10, Math.round((window.innerHeight - fh) / 2)) + 'px';
     }
     panel.style.setProperty('left', leftVal, 'important');
     panel.style.setProperty('top', topVal, 'important');
+    updateFloatingScale(panel, fw, fh);
   } else {
     // Default 'modal'
+    panel.classList.remove('fire-compact');
     panel.classList.add('fire-modal');
+  }
+
+  if (mode !== 'floating') {
+    panel.classList.remove('fire-compact');
   }
 
   if (minimizeBtn) {
