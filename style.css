@@ -50,6 +50,14 @@
     --fire-artist-size: 13px;
     --fire-player-padding: 20px;
     --fire-settings-w: 280px;
+    --fire-header-padding: 14px 20px;
+    --fire-header-btn-size: 32px;
+    --fire-header-btn-font-size: 16px;
+    --fire-header-gap: 12px;
+    --fire-header-title-size: 16px;
+    --fire-header-h: 60px;
+    --fire-tabs-padding: 12px;
+    --fire-tabs-font-size: 16px;
 }
 
 /* ─── Display Modes ─── */
@@ -328,6 +336,7 @@
     opacity: 1 !important;
     pointer-events: auto !important;
 }
+#fire-panel.fire-floating .fire-header,
 #fire-panel.fire-floating #fire-header {
     cursor: move !important;
     user-select: none !important;
@@ -368,6 +377,21 @@
 #fire-panel.fire-compact .fire-tabs-column {
     width: 100% !important;
     flex: 1 !important;
+}
+#fire-panel.fire-compact .fire-header {
+    padding: var(--fire-header-padding, 8px 14px);
+}
+#fire-panel.fire-compact .fire-header-btn {
+    width: var(--fire-header-btn-size, 26px);
+    height: var(--fire-header-btn-size, 26px);
+    font-size: var(--fire-header-btn-font-size, 13px);
+}
+#fire-panel.fire-compact .fire-header-actions {
+    gap: var(--fire-header-gap, 8px);
+}
+#fire-panel.fire-compact .fire-tab-btn {
+    padding: var(--fire-tabs-padding, 8px 6px);
+    font-size: var(--fire-tabs-font-size, 14px);
 }
 #fire-panel.fire-compact .fire-settings-dropdown {
     padding: 8px 10px;
@@ -753,36 +777,38 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: calc(14px + var(--fire-status-bar-inset, 0px)) 20px 14px 20px;
+    padding: var(--fire-header-padding, calc(14px + var(--fire-status-bar-inset, 0px)) 20px 14px 20px);
     border-bottom: 1px solid var(--fire-border);
     font-weight: bold;
     user-select: none;
     box-sizing: border-box;
+    flex-shrink: 0;
 }
 .fire-header-title {
     display: flex;
     align-items: center;
-    gap: 10px;
-    font-size: 16px;
+    gap: var(--fire-header-gap, 10px);
+    font-size: var(--fire-header-title-size, 16px);
     color: var(--fire-text);
 }
 .fire-header-actions {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--fire-header-gap, 12px);
 }
 .fire-header-btn {
     cursor: pointer;
-    font-size: 16px;
+    font-size: var(--fire-header-btn-font-size, 16px);
     color: var(--fire-text);
     opacity: 0.8;
     transition: opacity 0.2s, transform 0.2s;
-    width: 32px;
-    height: 32px;
+    width: var(--fire-header-btn-size, 32px);
+    height: var(--fire-header-btn-size, 32px);
     display: flex;
     align-items: center;
     justify-content: center;
     border-radius: 50%;
+    flex-shrink: 0;
 }
 .fire-header-btn:hover {
     opacity: 1;
@@ -793,7 +819,7 @@
 /* Panel Settings Dropdown */
 .fire-settings-dropdown {
     position: absolute;
-    top: calc(55px + var(--fire-status-bar-inset, 0px));
+    top: var(--fire-header-h, calc(55px + var(--fire-status-bar-inset, 0px)));
     right: 10px;
     width: 280px;
     max-width: calc(100% - 20px);
@@ -1328,12 +1354,12 @@
 }
 .fire-tab-btn {
     flex: 1;
-    padding: 12px;
+    padding: var(--fire-tabs-padding, 12px);
     text-align: center;
     background: none;
     border: none;
     color: var(--fire-text);
-    font-size: 16px;
+    font-size: var(--fire-tabs-font-size, 16px);
     cursor: pointer;
     opacity: 0.6;
     border-bottom: 2px solid transparent;

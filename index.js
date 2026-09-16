@@ -6913,8 +6913,18 @@ function updateFloatingScale(panel, w, h) {
   // Player padding: compact on shorter or narrower windows
   var playerPadding = (h < 460 || w < 400) ? '8px 12px' : ((h < 560 || w < 540) ? '12px 16px' : '20px');
 
+  // Header and Tabs dynamic sizing & positioning
+  var headerPadding = (h < 460 || w < 400) ? '6px 12px' : ((h < 560 || w < 540) ? '9px 16px' : '12px 20px');
+  var headerBtnSize = lerp(24, 34, ratio);
+  var headerBtnFontSize = lerp(12, 17, ratio);
+  var headerGap = lerp(6, 14, ratio);
+  var headerTitleSize = lerp(13, 17, ratio);
+  var tabsPadding = (h < 460 || w < 400) ? '6px 4px' : ((h < 560 || w < 540) ? '8px 8px' : '12px');
+  var tabsFontSize = lerp(13, 17, ratio);
+  var headerH = (h < 460 || w < 400) ? 38 : ((h < 560 || w < 540) ? 46 : 56);
+
   // CD diameter: ensure it never overflows available vertical & horizontal space
-  var availCDH = isCompact ? Math.max(90, h - 260) : Math.max(120, h - 230);
+  var availCDH = isCompact ? Math.max(90, h - (headerH + 210)) : Math.max(120, h - (headerH + 190));
   var availCDW = isCompact ? (w - 40) : Math.min(300, Math.round(w * 0.42));
   var cdSize = Math.max(90, Math.min(250, Math.min(availCDH, availCDW)));
 
@@ -6934,6 +6944,14 @@ function updateFloatingScale(panel, w, h) {
   panel.style.setProperty('--fire-artist-size', artistSize + 'px');
   panel.style.setProperty('--fire-player-padding', playerPadding);
   panel.style.setProperty('--fire-settings-w', settingsW + 'px');
+  panel.style.setProperty('--fire-header-padding', headerPadding);
+  panel.style.setProperty('--fire-header-btn-size', headerBtnSize + 'px');
+  panel.style.setProperty('--fire-header-btn-font-size', headerBtnFontSize + 'px');
+  panel.style.setProperty('--fire-header-gap', headerGap + 'px');
+  panel.style.setProperty('--fire-header-title-size', headerTitleSize + 'px');
+  panel.style.setProperty('--fire-header-h', headerH + 'px');
+  panel.style.setProperty('--fire-tabs-padding', tabsPadding);
+  panel.style.setProperty('--fire-tabs-font-size', tabsFontSize + 'px');
 }
 
 function bindPanelResize(panel, handle) {
