@@ -672,11 +672,14 @@ async function playSong(song) {
   }
   pendingStartVal = startVal;
 
-  // On mobile or compact mode, auto-switch to Now Playing tab when playing a song
+  // On mobile or compact mode, auto-switch to Now Playing tab when playing a song (except when browsing playlist preview)
   var panelElem = getDoc().getElementById('fire-panel');
   var isMobile = (panelElem && panelElem.classList.contains('fire-compact')) || ((window.parent || window).innerWidth <= 760);
   if (isMobile) {
-    switchTab('nowplaying');
+    var previewModal = getDoc().getElementById('fire-preview-modal');
+    if (!previewModal || previewModal.style.display === 'none') {
+      switchTab('nowplaying');
+    }
   }
 
   // Reset progress and lyrics
@@ -1671,12 +1674,34 @@ function saveTracksAsLocalPlaylist(playlistName, songs) {
   switchTab('playlists');
 }
 
-async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator, source) {
+async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator, source, cachedTracks) {
   var doc = getDoc();
   var panelBody = doc.getElementById('fire-panel-body');
   if (!panelBody) return;
 
-  closePlaylistPreview(); // Remove existing modal if any
+  var currentOrigin = (activeTab === 'discover') ? 'discover' : 'search';
+
+  // If the same playlist modal already exists in DOM, just reveal it
+  var existing = doc.getElementById('fire-preview-modal');
+  if (existing && currentPreviewPlaylistInfo && currentPreviewPlaylistInfo.id === playlistId && existing.querySelector('.fire-preview-song-row')) {
+    existing.style.display = 'flex';
+    currentPreviewPlaylistInfo.originTab = currentOrigin;
+    updatePreviewActiveSongHighlight();
+    return;
+  }
+
+  // Remove previous existing modal if any
+  closePlaylistPreview(true);
+
+  currentPreviewPlaylistInfo = {
+    id: playlistId,
+    name: playlistName,
+    coverUrl: coverUrl,
+    creator: creator,
+    source: source,
+    tracks: Array.isArray(cachedTracks) ? cachedTracks : null,
+    originTab: currentOrigin
+  };
 
   var modal = doc.createElement('div');
   modal.id = 'fire-preview-modal';
@@ -1687,14 +1712,20 @@ async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator, 
 
   modal.innerHTML = `
     <div class="fire-preview-modal-header">
-      <div class="fire-preview-modal-header-info">
-        <img class="fire-preview-modal-cover" src="${cover}" alt="cover">
-        <div style="min-width:0; flex:1;">
-          <div class="fire-preview-modal-title" title="${escapeHtml(playlistName)}">${escapeHtml(playlistName)}</div>
-          <div class="fire-preview-modal-subtitle" id="fire-preview-subtitle">${escapeHtml(creatorStr)} · 正在加载曲目...</div>
+      <div style="display:flex;align-items:center;min-width:0;flex:1;">
+        <button id="fire-preview-btn-back" class="fire-playlist-act-btn" style="width:28px;height:28px;font-size:13px;margin-right:8px;flex-shrink:0;" title="返回歌单列表"><i class="fa-solid fa-arrow-left"></i></button>
+        <div class="fire-preview-modal-header-info">
+          <img class="fire-preview-modal-cover" src="${cover}" alt="cover" draggable="false">
+          <div style="min-width:0; flex:1;">
+            <div class="fire-preview-modal-title" title="${escapeHtml(playlistName)}">${escapeHtml(playlistName)}</div>
+            <div class="fire-preview-modal-subtitle" id="fire-preview-subtitle">${escapeHtml(creatorStr)} · 正在加载曲目...</div>
+          </div>
         </div>
       </div>
-      <button id="fire-preview-btn-close" class="fire-playlist-act-btn" style="width:28px;height:28px;font-size:13px;" title="关闭"><i class="fa-solid fa-xmark"></i></button>
+      <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+        <button id="fire-preview-btn-min" class="fire-playlist-act-btn" style="width:28px;height:28px;font-size:13px;display:none;" title="最小化到悬浮球"><i class="fa-solid fa-minus"></i></button>
+        <button id="fire-preview-btn-close" class="fire-playlist-act-btn" style="width:28px;height:28px;font-size:13px;" title="收起/回到播放页"><i class="fa-solid fa-xmark"></i></button>
+      </div>
     </div>
     <div class="fire-preview-modal-actions" id="fire-preview-modal-actions" style="display:none;">
       <button id="fire-preview-btn-playall" class="fire-btn" title="替换当前播放队列并从头播放全部"><i class="fa-solid fa-play"></i> 播放全部</button>
@@ -1711,22 +1742,52 @@ async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator, 
 
   panelBody.appendChild(modal);
 
-  // Close event
+  // Back button (exit preview, restore search results)
+  var backBtn = modal.querySelector('#fire-preview-btn-back');
+  if (backBtn) {
+    backBtn.onclick = function(e) {
+      e.stopPropagation();
+      closePlaylistPreview(true);
+    };
+  }
+
+  // Minimize button (in floating mode)
+  var minBtn = modal.querySelector('#fire-preview-btn-min');
+  if (minBtn) {
+    if (state.settings.displayMode === 'floating') {
+      minBtn.style.display = 'inline-flex';
+    }
+    minBtn.onclick = function(e) {
+      e.stopPropagation();
+      minimizePlayer(true);
+    };
+  }
+
+  // Close event (soft close: switch to nowplaying, preserve preview)
   var closeBtn = modal.querySelector('#fire-preview-btn-close');
   if (closeBtn) {
-    closeBtn.onclick = function() {
-      closePlaylistPreview();
+    closeBtn.onclick = function(e) {
+      e.stopPropagation();
+      closePlaylistPreview(false);
     };
   }
   modal.onclick = function(e) {
     if (e.target === modal) {
-      closePlaylistPreview();
+      closePlaylistPreview(false);
     }
   };
 
-  // Fetch tracks
-  var songs = await fetchPlaylistTracks(playlistId, source);
+  // Fetch tracks (or use cachedTracks)
+  var songs;
+  if (Array.isArray(cachedTracks) && cachedTracks.length > 0) {
+    songs = cachedTracks;
+  } else {
+    songs = await fetchPlaylistTracks(playlistId, source);
+  }
   currentPlaylistPreviewTracks = songs;
+  if (currentPreviewPlaylistInfo) {
+    currentPreviewPlaylistInfo.tracks = songs;
+  }
 
   var subTitleEl = doc.getElementById('fire-preview-subtitle');
   var actionsEl = doc.getElementById('fire-preview-modal-actions');
@@ -1752,7 +1813,7 @@ async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator, 
     playAllBtn.onclick = function() {
       replaceActiveQueueWithTracks(songs);
       showToast(`已替换当前播放队列并开始播放「${playlistName}」`);
-      closePlaylistPreview();
+      closePlaylistPreview(false);
     };
   }
   if (appendAllBtn) {
@@ -1764,15 +1825,16 @@ async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator, 
   if (saveAsBtn) {
     saveAsBtn.onclick = function() {
       saveTracksAsLocalPlaylist(playlistName, songs);
-      closePlaylistPreview();
+      closePlaylistPreview(true);
     };
   }
 
   // Render song rows
   bodyEl.innerHTML = songs.map((s, idx) => {
     var artistStr = Array.isArray(s.artist) ? s.artist.join(' / ') : (s.artist || '未知歌手');
+    var isPlaying = state.currentSong && String(state.currentSong.id) === String(s.id);
     return `
-      <div class="fire-preview-song-row" data-song-idx="${idx}">
+      <div class="fire-preview-song-row ${isPlaying ? 'playing' : ''}" data-song-idx="${idx}">
         <span class="fire-preview-song-idx">${idx + 1}</span>
         <div class="fire-preview-song-info">
           <div class="fire-preview-song-name" title="${escapeHtml(s.name)}">${escapeHtml(s.name)}</div>
@@ -1786,7 +1848,19 @@ async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator, 
     `;
   }).join('');
 
-  // Song rows actions
+  // Row and Play button click
+  bodyEl.querySelectorAll('.fire-preview-song-row').forEach(row => {
+    row.addEventListener('click', function(e) {
+      if (e.target.closest('.fire-preview-song-add')) return;
+      var idx = parseInt(this.getAttribute('data-song-idx'), 10);
+      var s = songs[idx];
+      if (s) {
+        playSong(s);
+        updatePreviewActiveSongHighlight();
+      }
+    });
+  });
+
   bodyEl.querySelectorAll('.fire-preview-song-play').forEach(btn => {
     btn.addEventListener('click', function(e) {
       e.stopPropagation();
@@ -1794,6 +1868,7 @@ async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator, 
       var s = songs[idx];
       if (s) {
         playSong(s);
+        updatePreviewActiveSongHighlight();
       }
     });
   });
@@ -1809,13 +1884,55 @@ async function openPlaylistPreview(playlistId, playlistName, coverUrl, creator, 
       }
     });
   });
+
+  updatePreviewActiveSongHighlight();
 }
 
-function closePlaylistPreview() {
+function updatePreviewActiveSongHighlight() {
+  var doc = getDoc();
+  var bodyEl = doc.getElementById('fire-preview-modal-body');
+  if (!bodyEl) return;
+  bodyEl.querySelectorAll('.fire-preview-song-row').forEach(row => {
+    var idx = parseInt(row.getAttribute('data-song-idx'), 10);
+    var s = currentPlaylistPreviewTracks && currentPlaylistPreviewTracks[idx];
+    if (s && state.currentSong && String(s.id) === String(state.currentSong.id)) {
+      row.classList.add('playing');
+    } else {
+      row.classList.remove('playing');
+    }
+  });
+}
+
+function closePlaylistPreview(clearInfo) {
   var doc = getDoc();
   var existing = doc.getElementById('fire-preview-modal');
-  if (existing && existing.parentNode) {
-    existing.parentNode.removeChild(existing);
+  var panelElem = doc.getElementById('fire-panel');
+  var isMobile = (panelElem && panelElem.classList.contains('fire-compact')) || ((window.parent || window).innerWidth <= 760);
+
+  if (clearInfo) {
+    currentPreviewPlaylistInfo = null;
+    currentPlaylistPreviewTracks = [];
+    if (existing && existing.parentNode) {
+      existing.parentNode.removeChild(existing);
+    }
+    if (state.settings.searchMode === 'playlist') {
+      if (currentSearchPlaylists && currentSearchPlaylists.length > 0) {
+        renderPlaylistSearchResults(currentSearchPlaylists);
+      } else {
+        var container = doc.getElementById('fire-search-results');
+        if (container) {
+          var hint = (state.settings.playlistSearchSource === 'netease') ? '在上方输入关键词搜索网易云歌单' : '在上方输入关键词搜索QQ音乐歌单';
+          container.innerHTML = `<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">${hint}</div>`;
+        }
+      }
+    }
+  } else {
+    if (existing) {
+      existing.style.display = 'none';
+    }
+    if (isMobile) {
+      switchTab('nowplaying');
+    }
   }
 }
 
@@ -4095,6 +4212,7 @@ function bindUIEvents() {
       state.settings.playlistSearchSource = 'vkeys_tencent';
       saveState();
       updatePlaylistSearchUI();
+      closePlaylistPreview(true);
       var q = searchInput ? (searchInput.value || '').trim() : '';
       if (q) {
         performPlaylistSearch(q, 1);
@@ -4109,6 +4227,7 @@ function bindUIEvents() {
       state.settings.playlistSearchSource = 'netease';
       saveState();
       updatePlaylistSearchUI();
+      closePlaylistPreview(true);
       var q = searchInput ? (searchInput.value || '').trim() : '';
       if (q) {
         performPlaylistSearch(q, 1);
@@ -4122,6 +4241,7 @@ function bindUIEvents() {
     btnModeSong.addEventListener('click', function() {
       state.settings.searchMode = 'song';
       saveState();
+      closePlaylistPreview(true);
       btnModeSong.classList.add('active');
       btnModePlaylist.classList.remove('active');
       if (playlistSourceBar) playlistSourceBar.style.display = 'none';
@@ -4143,6 +4263,14 @@ function bindUIEvents() {
       if (playlistSourceBar) playlistSourceBar.style.display = 'flex';
       updatePlaylistSearchUI();
       if (filterBar) filterBar.style.display = 'none';
+      if (currentPreviewPlaylistInfo) {
+        var pModal = doc.getElementById('fire-preview-modal');
+        if (pModal) {
+          pModal.style.display = 'flex';
+          updatePreviewActiveSongHighlight();
+          return;
+        }
+      }
       if (paginationContainer) paginationContainer.style.display = (currentSearchPlaylists.length > 0) ? 'flex' : 'none';
       if (currentSearchPlaylists.length > 0) {
         renderPlaylistSearchResults(currentSearchPlaylists);
@@ -4170,6 +4298,7 @@ function bindUIEvents() {
     var handleSearch = function () {
       var val = (searchInput.value || '').replace(/[\u200B-\u200D\uFEFF\u00A0]/g, ' ').trim();
       if (val) {
+        closePlaylistPreview(true);
         if (state.settings.searchMode === 'playlist') {
           performPlaylistSearch(val, 1);
         } else {
@@ -4399,6 +4528,15 @@ function switchTab(tabName) {
   if (tabName === 'discover') {
     renderDiscoverTab();
   }
+  if (tabName === 'search') {
+    // If no preview is active and in playlist mode with results, ensure pagination is visible
+    if (!currentPreviewPlaylistInfo && state.settings.searchMode === 'playlist' && currentSearchPlaylists && currentSearchPlaylists.length > 0) {
+      var paginationContainer = getDoc().getElementById('fire-search-pagination');
+      if (paginationContainer) paginationContainer.style.display = 'flex';
+      var pageNumEl = getDoc().getElementById('fire-page-num');
+      if (pageNumEl) pageNumEl.textContent = `第 ${currentSearchPlaylistPage} 页`;
+    }
+  }
 }
 
 function updateTabUI() {
@@ -4456,6 +4594,33 @@ function updateTabUI() {
     if (activeTab === 'search' && panelSearch) panelSearch.classList.add('active');
     else if (activeTab === 'playlists' && panelPlaylists) panelPlaylists.classList.add('active');
     else if (activeTab === 'discover' && panelDiscover) panelDiscover.classList.add('active');
+  }
+
+  // Handle playlist preview modal visibility across tab switches
+  var previewModal = doc.getElementById('fire-preview-modal');
+  if (currentPreviewPlaylistInfo) {
+    var targetOrigin = currentPreviewPlaylistInfo.originTab || 'search';
+    if (activeTab === targetOrigin) {
+      if (previewModal) {
+        previewModal.style.display = 'flex';
+        updatePreviewActiveSongHighlight();
+      } else {
+        openPlaylistPreview(
+          currentPreviewPlaylistInfo.id,
+          currentPreviewPlaylistInfo.name,
+          currentPreviewPlaylistInfo.coverUrl,
+          currentPreviewPlaylistInfo.creator,
+          currentPreviewPlaylistInfo.source,
+          currentPreviewPlaylistInfo.tracks
+        );
+      }
+    } else {
+      if (previewModal) {
+        previewModal.style.display = 'none';
+      }
+    }
+  } else if (previewModal) {
+    previewModal.style.display = 'none';
   }
 }
 
@@ -5370,6 +5535,7 @@ function updatePlaybackUI() {
   // Refresh lists to highlight currently playing item
   renderSearchResults();
   renderPlaylistSongs();
+  updatePreviewActiveSongHighlight();
   updateFloatBallUI();
 }
 
@@ -5564,6 +5730,23 @@ function renderSearchResults() {
   var container = doc.getElementById('fire-search-results');
   var pagination = doc.getElementById('fire-search-pagination');
   if (!container) return;
+
+  if (state.settings.searchMode === 'playlist') {
+    var filterBar = doc.getElementById('fire-search-source-filter');
+    if (filterBar) filterBar.style.display = 'none';
+    if (currentPreviewPlaylistInfo) {
+      // User is currently viewing a playlist preview, do not touch container
+      return;
+    }
+    if (currentSearchPlaylists && currentSearchPlaylists.length > 0) {
+      renderPlaylistSearchResults(currentSearchPlaylists);
+    } else if (container) {
+      var hint = (state.settings.playlistSearchSource === 'netease') ? '在上方输入关键词搜索网易云歌单' : '在上方输入关键词搜索QQ音乐歌单';
+      container.innerHTML = `<div style="text-align:center;padding:4px;opacity:0.5;font-size:12px;margin-top:20px;">${hint}</div>`;
+      if (pagination) pagination.style.display = 'none';
+    }
+    return;
+  }
 
   renderSourceFilterBar();
 
@@ -6769,17 +6952,24 @@ function bindPanelDrag(panel, header) {
   var startX, startY;
   var startLeft, startTop;
 
-  header.addEventListener('mousedown', function(e) {
-    if (state.settings.displayMode !== 'floating') return;
-    if (e.target.closest('.fire-header-btn') || e.target.closest('input') || e.target.closest('button')) return;
+  var handleDragStart = function(e, clientX, clientY) {
+    if (state.settings.displayMode !== 'floating') return false;
+    var dragHandle = e.target.closest('.fire-header, .fire-preview-modal-header');
+    if (!dragHandle) return false;
+    if (e.target.closest('.fire-header-btn, .fire-playlist-act-btn, button, input, select, textarea, a, .fire-btn')) return false;
 
     isDragging = true;
-    startX = e.clientX;
-    startY = e.clientY;
+    startX = clientX;
+    startY = clientY;
 
     var rect = panel.getBoundingClientRect();
     startLeft = rect.left;
     startTop = rect.top;
+    return true;
+  };
+
+  panel.addEventListener('mousedown', function(e) {
+    if (!handleDragStart(e, e.clientX, e.clientY)) return;
 
     var onMouseMove = function(e) {
       if (!isDragging) return;
@@ -6814,18 +7004,9 @@ function bindPanelDrag(panel, header) {
     e.preventDefault();
   });
 
-  header.addEventListener('touchstart', function(e) {
-    if (state.settings.displayMode !== 'floating') return;
-    if (e.target.closest('.fire-header-btn') || e.target.closest('input') || e.target.closest('button')) return;
-
+  panel.addEventListener('touchstart', function(e) {
     var touch = e.touches[0];
-    isDragging = true;
-    startX = touch.clientX;
-    startY = touch.clientY;
-
-    var rect = panel.getBoundingClientRect();
-    startLeft = rect.left;
-    startTop = rect.top;
+    if (!touch || !handleDragStart(e, touch.clientX, touch.clientY)) return;
 
     var onTouchMove = function(e) {
       if (!isDragging) return;
@@ -7867,9 +8048,9 @@ export function init() {
       } else if (e.key === 'Escape' && panelOpen) {
         var doc = getDoc();
         var previewModal = doc.getElementById('fire-preview-modal');
-        if (previewModal) {
+        if (previewModal && previewModal.style.display !== 'none') {
           e.preventDefault();
-          previewModal.remove();
+          closePlaylistPreview(false);
           return;
         }
         var listenHelp = doc.getElementById('fire-listen-help-modal') || doc.getElementById('fire-listen-template-modal');

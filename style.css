@@ -356,15 +356,30 @@
     opacity: 0 !important;
     pointer-events: none !important;
     transition: opacity 0.2s ease, box-shadow 0.2s ease !important;
+    overflow: hidden !important;
 }
 #fire-panel.fire-floating.fire-open {
     opacity: 1 !important;
     pointer-events: auto !important;
 }
 #fire-panel.fire-floating .fire-header,
-#fire-panel.fire-floating #fire-header {
+#fire-panel.fire-floating #fire-header,
+#fire-panel.fire-floating .fire-preview-modal-header {
     cursor: move !important;
     user-select: none !important;
+}
+#fire-panel.fire-floating .fire-preview-modal-header button,
+#fire-panel.fire-floating .fire-preview-modal-header .fire-playlist-act-btn {
+    cursor: pointer !important;
+}
+#fire-panel.fire-floating .fire-preview-modal-header img,
+#fire-panel.fire-floating .fire-header img {
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+#fire-panel.fire-floating #fire-preview-btn-min {
+    display: inline-flex !important;
 }
 #fire-overlay.fire-floating-overlay {
     pointer-events: none !important;
@@ -444,12 +459,12 @@
     position: absolute;
     right: 2px;
     bottom: 2px;
-    width: 18px;
-    height: 18px;
+    width: 22px;
+    height: 22px;
     cursor: nwse-resize;
-    z-index: 10;
+    z-index: 100 !important;
     display: none;
-    opacity: 0.5;
+    opacity: 0.6;
     transition: opacity 0.2s;
     touch-action: none;
 }
@@ -937,6 +952,7 @@
     grid-template-rows: auto 1fr;
     flex: 1;
     overflow: hidden;
+    border-radius: inherit;
 }
 
 #fire-tab-btn-nowplaying {
@@ -2675,7 +2691,40 @@
     flex-direction: column;
     animation: fire-fade-in 0.18s ease-out;
     border-radius: inherit;
+    overflow: hidden !important;
     color: var(--fire-text, var(--SmartThemeBodyColor, #f3f4f6));
+}
+
+#fire-panel.fire-floating .fire-preview-modal-backdrop {
+    border-radius: 14px !important;
+}
+
+#fire-panel.fire-modal .fire-preview-modal-backdrop {
+    border-radius: 16px !important;
+}
+
+#fire-panel.fire-drawer-top .fire-preview-modal-backdrop,
+#fire-panel.fire-qr-top .fire-preview-modal-backdrop {
+    border-radius: 0 0 12px 12px !important;
+}
+
+#fire-panel.fire-drawer-bottom .fire-preview-modal-backdrop,
+#fire-panel.fire-qr-bottom .fire-preview-modal-backdrop {
+    border-radius: 12px 12px 0 0 !important;
+}
+
+#fire-panel.fire-drawer-left .fire-preview-modal-backdrop,
+#fire-panel.fire-qr-left .fire-preview-modal-backdrop {
+    border-radius: 0 12px 12px 0 !important;
+}
+
+#fire-panel.fire-drawer-right .fire-preview-modal-backdrop,
+#fire-panel.fire-qr-right .fire-preview-modal-backdrop {
+    border-radius: 12px 0 0 12px !important;
+}
+
+#fire-panel.fire-fullscreen .fire-preview-modal-backdrop {
+    border-radius: 0 !important;
 }
 
 .fire-preview-modal-header {
@@ -2762,6 +2811,27 @@
 
 .fire-preview-song-row:hover {
     background: rgba(128, 128, 128, 0.08);
+}
+
+.fire-preview-song-row.playing {
+    background: rgba(168, 85, 247, 0.14) !important;
+    border-left: 3px solid var(--fire-accent, #a855f7);
+}
+
+.fire-preview-song-row.playing .fire-preview-song-idx {
+    color: var(--fire-accent, #a855f7) !important;
+    font-weight: bold;
+    opacity: 1;
+}
+
+.fire-preview-song-row.playing .fire-preview-song-name {
+    color: var(--fire-accent, #a855f7) !important;
+    font-weight: 600;
+}
+
+.fire-preview-song-row.playing .fire-preview-song-play {
+    color: var(--fire-accent, #a855f7) !important;
+    opacity: 1 !important;
 }
 
 .fire-preview-song-idx {
